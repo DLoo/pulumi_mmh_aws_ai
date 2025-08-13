@@ -1,0 +1,23 @@
+config:
+  aws:region: ap-southeast-1
+  pulumi_mmh_aws_ai:project_name: mmh-aws-sg
+  pulumi_mmh_aws_ai:environment: prod
+  
+  # --- Existing Network Configuration ---
+  # Replace these with your actual VPC and Subnet IDs.
+  pulumi_mmh_aws_ai:existing_vpc_id: "vpc-04f68f63cf718aa39"
+  pulumi_mmh_aws_ai:existing_public_subnet_ids:
+    - "subnet-06970334ee9722245"  # Replace with your actual public subnet ID 1
+    - "subnet-054822eb6271cbc23"  # Replace with your actual public subnet ID 2
+  pulumi_mmh_aws_ai:existing_private_subnet_ids:
+    - "subnet-04c572e079ac8e5b7"  # Replace with your actual private subnet ID 1
+    - "subnet-0318e326e06481272"  # Replace with your actual private subnet ID 2
+
+  # --- EKS Cluster Configuration ---
+  pulumi_mmh_aws_ai:eks_cluster_name: mmh-aws-sg-eks-cluster
+  pulumi_mmh_aws_ai:eks_cluster_version: "1.30"
+  pulumi_mmh_aws_ai:eks_node_instance_types:
+    - t3.large
+  pulumi_mmh_aws_ai:eks_node_desired_count: 2
+  pulumi_mmh_aws_ai:eks_node_min_count: 2
+  pulumi_mmh_aws_ai:eks_node_max_count: 5
