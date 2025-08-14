@@ -22,7 +22,7 @@ existing_public_subnet_ids = config.require_object("existing_public_subnet_ids")
 existing_private_subnet_ids = config.require_object("existing_private_subnet_ids")
 
 # Load other configurations
-eks_cluster_version = config.get("eks_cluster_version") or "1.30"
+eks_cluster_version = config.get("eks_cluster_version") or "1.31"
 # eks_ebs_csi_driver_version = config.get("eks_ebs_csi_driver_version") or "v1.44.0-eksbuild.1"
 # eks_efs_csi_driver_version = config.get("eks_efs_csi_driver_version") or "3.1.9"
 # eks_cert_manager_version = config.get("eks_cert_manager_version") or "v1.18.0"
@@ -93,10 +93,10 @@ eks_node_instance_role = aws.iam.Role(f"{project_name}-eks-node-role",
     }),
     tags=create_common_tags("eks-node-role"))
 
-eks_node_instance_profile = aws.iam.InstanceProfile(f"{project_name}-eks-node-profile",
-    role=eks_node_instance_role.name,
-    tags=create_common_tags("eks-node-profile")
-)
+# eks_node_instance_profile = aws.iam.InstanceProfile(f"{project_name}-eks-node-profile",
+#     role=eks_node_instance_role.name,
+#     tags=create_common_tags("eks-node-profile")
+# )
 
 managed_node_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
@@ -159,42 +159,26 @@ eks_cluster = eks.Cluster(f"{project_name}-eks",
     version=eks_cluster_version,
     enabled_cluster_log_types=["api", "audit", "authenticator", "controllerManager", "scheduler"],
     tags=create_common_tags("eks"),
-    instance_roles=[eks_node_instance_role],
-    instance_profile_name=eks_node_instance_profile.name,
-    # node_group_options=eks.ClusterNodeGroupOptionsArgs(
-    #     instance_type=primary_instance_type,
-    #     desired_capacity=node_config["desired_count"],
-    #     min_size=node_config["min_count"],
-    #     max_size=node_config["max_count"],
-    #     labels={"ondemand": "true"}
-    # ),
+    # instance_roles=[eks_node_instance_role],
+    # instance_profile_name=eks_node_instance_profile.name,
+    node_group_options=eks.ClusterNodeGroupOptionsArgs(
+        instance_type=primary_instance_type,
+        desired_capacity=node_config["desired_count"],
+        min_size=node_config["min_count"],
+        max_size=node_config["max_count"],
+        labels={"ondemand": "true"}
+    ),
     opts=pulumi.ResourceOptions(
         protect=eks_cluster_protect,
         delete_before_replace=False
         # depends_on=[vpc]
     ))
 
+
 kubeconfig = eks_cluster.kubeconfig
 k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfig)
 
-# --- EKS Node Group (Now a separate resource) ---
-# Your eks_node_instance_role code from earlier is used here
-managed_node_group = eks.ManagedNodeGroup(f"{project_name}-managed-ng",
-    cluster=eks_cluster, # Reference the created cluster
-    # node_role=eks_node_instance_role, # Pass your custom role here
-    scaling_config=aws.eks.NodeGroupScalingConfigArgs(
-        desired_size=node_config["desired_count"],
-        min_size=node_config["min_count"],
-        max_size=node_config["max_count"],
-    ),
-    instance_types=[node_config["instance_types"][0]], # Pass as a list
-    subnet_ids=private_subnet_ids, # Explicitly define subnets
-    labels={"ondemand": "true"},
-    tags=create_common_tags("managed-nodegroup"),
-    opts=pulumi.ResourceOptions(
-        depends_on=[eks_cluster]
-    )
-)
+
 
 # --- Outputs ---
 pulumi.export("vpc_id", vpc.id)

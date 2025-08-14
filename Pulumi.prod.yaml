@@ -15,7 +15,7 @@ config:
 
   # --- EKS Cluster Configuration ---
   pulumi_mmh_aws_ai:eks_cluster_name: mmh-aws-sg-eks-cluster
-  pulumi_mmh_aws_ai:eks_cluster_version: "1.30"
+  pulumi_mmh_aws_ai:eks_cluster_version: "1.31"
   pulumi_mmh_aws_ai:eks_node_instance_types:
     - t3.large
   pulumi_mmh_aws_ai:eks_node_desired_count: 2
