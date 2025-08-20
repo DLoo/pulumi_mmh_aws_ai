@@ -796,43 +796,56 @@ external_dns_chart = Chart("external-dns",
 
 
 
-# 1. Create a dedicated Security Group for the EFS file system.
+# 1. Create a dedicated Security Group for the EFS file system with NO inline rules.
 efs_security_group = aws.ec2.SecurityGroup(f"{project_name}-efs-sg",
-    vpc_id=vpc.vpc_id,
+    vpc_id=vpc.id, # Corrected to use vpc.id from your existing code
     description="Allow NFS traffic from EKS nodes to EFS",
-    tags=create_common_tags("efs-sg"),
-    # Define the crucial ingress rule inline.
-    ingress=[{
-            "protocol":"tcp",
-            "from_port":2049, # NFS port
-            "to_port":2049,
-            # This is the key: it allows traffic ONLY from the worker nodes.
-            "security_groups": [eks_cluster.node_security_group_id],
-            "description":"Allow NFS from EKS worker nodes"
-    }],
-
+    tags=create_common_tags("efs-sg")
 )
 
-# 2. Create the EFS File System.
+# 2. Create a standalone Ingress Rule to allow traffic from the EKS node security group.
+efs_ingress_rule = aws.vpc.SecurityGroupIngressRule(f"{project_name}-efs-ingress-rule",
+    security_group_id=efs_security_group.id,
+    description="Allow NFS from EKS worker nodes",
+    ip_protocol="tcp",
+    from_port=2049,  # NFS port
+    to_port=2049,
+    # This is the key: it references the source security group ID.
+    source_security_group_id=eks_cluster.node_security_group_id
+)
+
+# 3. Create the EFS File System.
 efs_file_system = aws.efs.FileSystem(f"{project_name}-efs",
     tags=create_common_tags("efs"),
-    # Adding protect is wise for production EFS file systems.
     opts=pulumi.ResourceOptions(protect=eks_efs_protect)
 )
 
-
-# 3. Create the EFS Mount Targets in each private subnet.
-#    This now uses the dedicated EFS security group.
+# 4. Create the EFS Mount Targets in each private subnet.
+#    This now correctly uses the dedicated EFS security group.
 efs_mount_targets = []
 for i, subnet_id in enumerate(existing_private_subnet_ids):
     mount_target = aws.efs.MountTarget(
         f"{project_name}-efs-mount-{i}",
         file_system_id=efs_file_system.id,
         subnet_id=subnet_id,
-        # eks_cluster.node_security_group is a convenient output from the high-level eks.Cluster component
-        security_groups=[efs_security_group.id]
+        security_groups=[efs_security_group.id],
+        # Add a dependency to ensure the ingress rule is created before the mount target
+        opts=pulumi.ResourceOptions(depends_on=[efs_ingress_rule])
     )
     efs_mount_targets.append(mount_target)
+
+# # 3. Create the EFS Mount Targets in each private subnet.
+# #    This now uses the dedicated EFS security group.
+# efs_mount_targets = []
+# for i, subnet_id in enumerate(existing_private_subnet_ids):
+#     mount_target = aws.efs.MountTarget(
+#         f"{project_name}-efs-mount-{i}",
+#         file_system_id=efs_file_system.id,
+#         subnet_id=subnet_id,
+#         # eks_cluster.node_security_group is a convenient output from the high-level eks.Cluster component
+#         security_groups=[efs_security_group.id]
+#     )
+#     efs_mount_targets.append(mount_target)
 
 
 # This policy is sufficient for both controller and node components.
