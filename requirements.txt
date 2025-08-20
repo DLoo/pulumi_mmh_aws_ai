@@ -3,3 +3,4 @@ pulumi-aws>=7.0.0,<8.0.0
 pulumi_kubernetes
 pulumi-eks
 requests
+pulumi_awsx
