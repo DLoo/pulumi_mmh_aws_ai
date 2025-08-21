@@ -196,13 +196,70 @@ k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfi
 # --- MANAGED NODE GROUPS (Following Official Pulumi Pattern) ---
 # ==============================================================================
 
-# 1. Create the primary node group that replaces the old "default" one.
-#    It will automatically use the cluster's shared security group.
+# --- Launch Template for the Primary Node Group ---
+primary_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-primary-ng-lt",
+    name_prefix=f"{project_name}-primary-ng-lt-",
+    
+    # Define the instance type within the launch template
+    instance_type=node_config["instance_types"][0], # Assumes the first instance type in the list
+    
+    # Define the disk size within the launch template using block_device_mappings
+    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+        device_name="/dev/xvda", # The root device name for Amazon Linux 2
+        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+            volume_size=90,      # Set the desired disk size here
+            volume_type="gp3",   # It's good practice to specify gp3
+            delete_on_termination=True,
+        ),
+    )],
+    
+    # Enable detailed monitoring
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
+        enabled=True,
+    ),
+    
+    tags=create_common_tags("primary-ng-lt")
+)
+
+# --- Launch Template for the Second (m5.large) Node Group ---
+second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-m5-large-ng-lt",
+    name_prefix=f"{project_name}-m5-large-ng-lt-",
+    
+    # Define this group's specific instance type
+    instance_type=eks_nodegroup_instance_types[0], # Assumes the first instance type in the list
+
+    # Define the disk size for this group as well
+    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+        device_name="/dev/xvda",
+        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+            volume_size=90,
+            volume_type="gp3",
+            delete_on_termination=True,
+        ),
+    )],
+    
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
+        enabled=True,
+    ),
+    
+    tags=create_common_tags("m5-large-ng-lt")
+)
+
+
+# 1. Update the primary node group to use its dedicated launch template.
 primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
-    cluster=eks_cluster, # Associate with our cluster
+    cluster=eks_cluster,
     node_group_name=f"{project_name}-primary-nodes",
-    node_role=eks_node_instance_role, # Use the role you already defined
-    instance_types=node_config["instance_types"],
+    node_role=eks_node_instance_role,
+    
+    # REMOVED: instance_types and disk_size are now in the launch template.
+    
+    # Associate the custom launch template.
+    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+        id=primary_ng_launch_template.id,
+        version=primary_ng_launch_template.latest_version
+    ),
+    
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
@@ -216,19 +273,24 @@ primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
     )
 )
 
-# 2. Create your second node group. It's now a simple, repeatable pattern.
-#    It will also automatically use the same shared security group.
-second_node_group = eks.ManagedNodeGroup(f"{project_name}-m5-large-ng",
-    cluster=eks_cluster, # Associate with the SAME cluster
+# 2. Update the second node group to use its dedicated launch template.
+second_node_group = eks.ManagedNodeGroup(f"{project_name}-{eks_nodegroup_instance_types[0].replace(".", "-")}-ng",
+    cluster=eks_cluster,
     node_group_name=f"{project_name}-m5-large-nodes",
-    node_role=eks_node_instance_role, # Use the SAME role
-    instance_types=eks_nodegroup_instance_types,
+    node_role=eks_node_instance_role,
+    
+    # REMOVED: instance_types and disk_size are now in the launch template.
+
+    # Associate its own launch template.
+    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+        id=second_ng_launch_template.id,
+        version=second_ng_launch_template.latest_version
+    ),
     
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
         max_size=node_config["max_count"],
-        
     ),
     subnet_ids=existing_private_subnet_ids,
     labels={"workload-type": "general-purpose", "instance-type": eks_nodegroup_instance_types[0].replace(".", "-")},
@@ -237,7 +299,6 @@ second_node_group = eks.ManagedNodeGroup(f"{project_name}-m5-large-ng",
         depends_on=[eks_cluster]
     )
 )
-
 
 
 
@@ -814,8 +875,7 @@ efs_ingress_rule = aws.vpc.SecurityGroupIngressRule(f"{project_name}-efs-ingress
     ip_protocol="tcp",
     from_port=2049,  # NFS port
     to_port=2049,
-    # This is the key: it references the source security group ID.
-    source_security_group_id=eks_cluster.node_security_group_id
+    referenced_security_group_id=eks_cluster.node_security_group_id
 )
 
 # 3. Create the EFS File System.
