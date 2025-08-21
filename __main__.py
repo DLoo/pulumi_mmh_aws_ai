@@ -1070,148 +1070,49 @@ cloudwatch_observability_addon = eks.Addon(f"{project_name}-cloudwatch-observabi
 
 
 
-# 5. Velero
-velero_s3_bucket = aws.s3.BucketV2(f"{project_name}-velero-backups",
+# --- Velero for Backups ---
+# AMENDED: Changed from deprecated `BucketV2` to `Bucket`.
+velero_s3_bucket = aws.s3.Bucket(f"{project_name}-velero-backups",
     bucket=velero_s3_bucket_name,
     tags=create_common_tags("velero-backups"))
-
 aws.s3.BucketPublicAccessBlock(f"{project_name}-velero-backups-public-access",
-    bucket=velero_s3_bucket.id,
-    block_public_acls=True,
-    block_public_policy=True,
-    ignore_public_acls=True,
-    restrict_public_buckets=True)
-
+    bucket=velero_s3_bucket.id, block_public_acls=True, block_public_policy=True, ignore_public_acls=True, restrict_public_buckets=True)
 velero_iam_user = aws.iam.User(f"{project_name}-velero-user", name=f"{project_name}-velero")
-
-velero_policy_json = pulumi.Output.all(bucket_name=velero_s3_bucket.bucket).apply(lambda args: json.dumps({
+velero_policy_json = velero_s3_bucket.bucket.apply(lambda bucket_name: json.dumps({
     "Version": "2012-10-17",
     "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:CreateTags",
-                "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:DeleteSnapshot"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject", "s3:DeleteObject", "s3:PutObject",
-                "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"
-            ],
-            "Resource": [f"arn:aws:s3:::{args['bucket_name']}/*"]
-        },
-        {
-            "Effect": "Allow",
-            "Action": ["s3:ListBucket"],
-            "Resource": [f"arn:aws:s3:::{args['bucket_name']}"]
-        }
+        {"Effect": "Allow", "Action": ["ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:CreateTags", "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:DeleteSnapshot"], "Resource": "*"},
+        {"Effect": "Allow", "Action": ["s3:GetObject", "s3:DeleteObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"], "Resource": [f"arn:aws:s3:::{bucket_name}/*"]},
+        {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": [f"arn:aws:s3:::{bucket_name}"]}
     ]
 }))
-
-velero_iam_policy = aws.iam.Policy(f"{project_name}-velero-policy",
-    name=f"{project_name}-VeleroBackupPolicy",
-    policy=velero_policy_json)
-
-aws.iam.UserPolicyAttachment(f"{project_name}-velero-user-policy-attachment",
-    user=velero_iam_user.name,
-    policy_arn=velero_iam_policy.arn)
-
+velero_iam_policy = aws.iam.Policy(f"{project_name}-velero-policy", name=f"{project_name}-VeleroBackupPolicy", policy=velero_policy_json)
+aws.iam.UserPolicyAttachment(f"{project_name}-velero-user-policy-attachment", user=velero_iam_user.name, policy_arn=velero_iam_policy.arn)
 velero_access_key = aws.iam.AccessKey(f"{project_name}-velero-access-key", user=velero_iam_user.name)
-
-# velero_credentials_file_content = pulumi.Output.all(
-#     key_id=velero_access_key.id,
-#     secret_key=velero_access_key.secret
-# ).apply(lambda args: f"[default]\naws_access_key_id={args['key_id']}\naws_secret_access_key={args['secret_key']}")
-
-velero_namespace = k8s.core.v1.Namespace("velero-ns",
-    metadata={"name": "velero"},
-    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
-
-velero_secret = k8s.core.v1.Secret(
-    "velero-cloud-credentials",
-    metadata=k8s.meta.v1.ObjectMetaArgs(
-        name="cloud-credentials",
-        namespace=velero_namespace.metadata["name"],
-    ),
-    # THE FIX: Use pulumi.Output.all() to get both id and secret together.
-    string_data={
-        "cloud": pulumi.Output.all(
-            id=velero_access_key.id,
-            secret=velero_access_key.secret
-        ).apply(
-            lambda args: f"[default]\naws_access_key_id={args['id']}\naws_secret_access_key={args['secret']}"
-        )
-    },
+velero_namespace = k8s.core.v1.Namespace("velero-ns", metadata={"name": "velero"}, opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
+velero_secret = k8s.core.v1.Secret("velero-cloud-credentials",
+    metadata=k8s.meta.v1.ObjectMetaArgs(name="cloud-credentials", namespace=velero_namespace.metadata["name"]),
+    string_data={"cloud": pulumi.Output.all(id=velero_access_key.id, secret=velero_access_key.secret).apply(lambda args: f"[default]\naws_access_key_id={args['id']}\naws_secret_access_key={args['secret']}")},
     type="Opaque",
-    opts=pulumi.ResourceOptions(
-        provider=k8s_provider,
-        depends_on=[velero_namespace, velero_access_key],
-        protect=eks_velero_protect
-    )
-)
-
+    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[velero_namespace, velero_access_key], protect=eks_velero_protect))
 velero_chart = Chart(f"{project_name}-velero-chart",
     ChartOpts(
-        chart="velero",
-        version=eks_velero_version,
-        fetch_opts=FetchOpts(repo="https://vmware-tanzu.github.io/helm-charts"),
+        chart="velero", version=eks_velero_version, fetch_opts=FetchOpts(repo="https://vmware-tanzu.github.io/helm-charts"),
         namespace=velero_namespace.metadata["name"],
         values={
-             "configuration": {
-                "backupStorageLocation": [{
-                    "name": "default",
-                    "provider": "aws",
-                    "bucket": velero_s3_bucket.bucket,
-                    "config": {
-                        "region": aws_region
-                    }
-                }],
-                "volumeSnapshotLocation": [{
-                    "name": "default",
-                    "provider": "aws",
-                    "config": {
-                        "region": aws_region
-                    }
-                }]
+            "configuration": {
+                "backupStorageLocation": [{"name": "default", "provider": "aws", "bucket": velero_s3_bucket.bucket, "config": {"region": aws_region}}],
+                "volumeSnapshotLocation": [{"name": "default", "provider": "aws", "config": {"region": aws_region}}]
             },
-            "credentials": {
-                "useSecret": True,
-                # The name of the k8s.core.v1.Secret resource we created earlier
-                "existingSecret": velero_secret.metadata["name"]
-            },
+            "credentials": {"useSecret": True, "existingSecret": velero_secret.metadata["name"]},
             "snapshotsEnabled": True,
-            # The `extraPlugins` key is not standard. Plugins are added via initContainers.
-            # This is the correct way to install the AWS plugin.
-            "initContainers": [
-                {
-                    "name": "velero-plugin-for-aws",
-                    "image": "velero/velero-plugin-for-aws:v1.9.0", # Use a recent, compatible version
-                    "imagePullPolicy": "IfNotPresent",
-                    "volumeMounts": [{"mountPath": "/target", "name": "plugins"}],
-                }
-            ],
-            "metrics": {
-                "enabled": False
-            },
-            # This can be set to false as it is not needed for most backup/restore cases
-            # and is the source of the webhook error.
+            "initContainers": [{"name": "velero-plugin-for-aws", "image": "velero/velero-plugin-for-aws:v1.9.0", "imagePullPolicy": "IfNotPresent", "volumeMounts": [{"mountPath": "/target", "name": "plugins"}]}],
+            "metrics": {"enabled": False},
             "deployNodeAgent": True,
         }
-    ),     
-    opts=pulumi.ResourceOptions(
-        provider=k8s_provider,
-        # --- FIX 2: Add explicit dependency on the LBC chart ---
-        # This ensures the Velero chart waits until the LBC webhook is fully ready.
-        depends_on=[
-            velero_secret,
-            gp3_storage_class,
-            # aws_load_balancer_controller_chart # <-- This is the crucial addition for the webhook error
-        ]
-    )
-)
+    ),
+    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[velero_secret, gp3_storage_class]))
+
 
 
 
