@@ -18,6 +18,8 @@ config:
   pulumi_mmh_aws_ai:eks_cluster_version: "1.33"
   pulumi_mmh_aws_ai:eks_node_instance_types:
     - m5.large
+  pulumi_mmh_aws_ai:eks_nodegroup_instance_types:
+    - m5.xlarge
   pulumi_mmh_aws_ai:eks_node_desired_count: 1
   pulumi_mmh_aws_ai:eks_node_min_count: 1
   pulumi_mmh_aws_ai:eks_node_max_count: 4
