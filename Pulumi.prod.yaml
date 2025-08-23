@@ -25,7 +25,9 @@ config:
   pulumi_mmh_aws_ai:eks_node_max_count: 4
 
   pulumi_mmh_aws_ai:route53_hosted_zone_id: "Z09700871FJ2A2TMV67BU"
+  # pulumi_mmh_aws_ai:route53_hosted_zone_id: "Z008703814HR23DLTBYF"
   pulumi_mmh_aws_ai:external_dns_domains:
     - app.mmh-global.com
-    - api.mmh-global.com
+    # - app.musimmas.com
+
   

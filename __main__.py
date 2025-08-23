@@ -196,70 +196,13 @@ k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfi
 # --- MANAGED NODE GROUPS (Following Official Pulumi Pattern) ---
 # ==============================================================================
 
-# --- Launch Template for the Primary Node Group ---
-primary_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-primary-ng-lt",
-    name_prefix=f"{project_name}-primary-ng-lt-",
-    
-    # Define the instance type within the launch template
-    instance_type=node_config["instance_types"][0], # Assumes the first instance type in the list
-    
-    # Define the disk size within the launch template using block_device_mappings
-    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
-        device_name="/dev/xvda", # The root device name for Amazon Linux 2
-        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
-            volume_size=90,      # Set the desired disk size here
-            volume_type="gp3",   # It's good practice to specify gp3
-            delete_on_termination=True,
-        ),
-    )],
-    
-    # Enable detailed monitoring
-    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
-        enabled=True,
-    ),
-    
-    tags=create_common_tags("primary-ng-lt")
-)
-
-# --- Launch Template for the Second (m5.large) Node Group ---
-second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-m5-large-ng-lt",
-    name_prefix=f"{project_name}-m5-large-ng-lt-",
-    
-    # Define this group's specific instance type
-    instance_type=eks_nodegroup_instance_types[0], # Assumes the first instance type in the list
-
-    # Define the disk size for this group as well
-    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
-        device_name="/dev/xvda",
-        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
-            volume_size=90,
-            volume_type="gp3",
-            delete_on_termination=True,
-        ),
-    )],
-    
-    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
-        enabled=True,
-    ),
-    
-    tags=create_common_tags("m5-large-ng-lt")
-)
-
-
-# 1. Update the primary node group to use its dedicated launch template.
+# 1. Create the primary node group that replaces the old "default" one.
+#    It will automatically use the cluster's shared security group.
 primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
-    cluster=eks_cluster,
+    cluster=eks_cluster, # Associate with our cluster
     node_group_name=f"{project_name}-primary-nodes",
-    node_role=eks_node_instance_role,
-    
-    # REMOVED: instance_types and disk_size are now in the launch template.
-    
-    # Associate the custom launch template.
-    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
-        id=primary_ng_launch_template.id,
-        version=primary_ng_launch_template.latest_version
-    ),
-    
+    node_role=eks_node_instance_role, # Use the role you already defined
+    instance_types=node_config["instance_types"],
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
@@ -273,32 +216,26 @@ primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
     )
 )
 
-# 2. Update the second node group to use its dedicated launch template.
-second_node_group = eks.ManagedNodeGroup(f"{project_name}-{eks_nodegroup_instance_types[0].replace(".", "-")}-ng",
-    cluster=eks_cluster,
-    node_group_name=f"{project_name}-m5-large-nodes",
-    node_role=eks_node_instance_role,
-    
-    # REMOVED: instance_types and disk_size are now in the launch template.
-
-    # Associate its own launch template.
-    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
-        id=second_ng_launch_template.id,
-        version=second_ng_launch_template.latest_version
-    ),
-    
+# 2. Create your second node group. It's now a simple, repeatable pattern.
+#    It will also automatically use the same shared security group.
+m5_xlarge_node_group = eks.ManagedNodeGroup(f"{project_name}-m5-xlarge-ng",
+    cluster=eks_cluster, # Associate with the SAME cluster
+    node_group_name=f"{project_name}-m5-xlarge-nodes",
+    node_role=eks_node_instance_role, # Use the SAME role
+    instance_types=["m5.xlarge"],
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
         max_size=node_config["max_count"],
     ),
     subnet_ids=existing_private_subnet_ids,
-    labels={"workload-type": "general-purpose", "instance-type": eks_nodegroup_instance_types[0].replace(".", "-")},
-    tags=create_common_tags(f"{eks_nodegroup_instance_types[0].replace(".", "-")}-ng"),
+    labels={"workload-type": "general-purpose", "instance-type": "m5-xlarge"},
+    tags=create_common_tags("m5-xlarge-ng"),
     opts=pulumi.ResourceOptions(
         depends_on=[eks_cluster]
     )
 )
+
 
 
 
@@ -326,7 +263,7 @@ cert_manager_sa_name = f"{project_name}-cert-manager"
 cert_manager_role_name = f"{project_name}-cert-manager-irsa-role"
 
 # Manually construct the ARN to break the circular dependency for the permissions policy.
-aws_account_id = eks_cluster.core.oidc_provider.arn.apply(lambda arn: arn.split(':')[4])
+aws_account_id = eks_cluster.oidc_provider_arn.apply(lambda arn: arn.split(':')[4])
 cert_manager_role_arn = pulumi.Output.concat("arn:aws:iam::", aws_account_id, ":role/", cert_manager_role_name)
 
 # Define a single, consolidated permissions policy for cert-manager.
@@ -372,8 +309,8 @@ cert_manager_iam_policy = aws.iam.Policy(f"{project_name}-cert-manager-policy",
 cert_manager_irsa_role = aws.iam.Role(f"{project_name}-cert-manager-irsa-role",
     name=cert_manager_role_name,
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
-        oidc_provider_url=eks_cluster.core.oidc_provider.url
+        oidc_provider_arn=eks_cluster.oidc_provider_arn,
+        oidc_provider_url=eks_cluster.oidc_provider_url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -567,8 +504,8 @@ ebs_csi_policy = aws.iam.Policy(f"{project_name}-ebs-csi-policy",
 # 2. Create the IAM Role for the Service Account.
 ebs_csi_irsa_role = aws.iam.Role(f"{project_name}-ebs-csi-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
-        oidc_provider_url=eks_cluster.core.oidc_provider.url
+        oidc_provider_arn=eks_cluster.oidc_provider_arn,
+        oidc_provider_url=eks_cluster.oidc_provider_url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -705,7 +642,7 @@ lbc_sa_name = "aws-load-balancer-controller"
 lbc_sa_namespace = "kube-system"
 
 lbc_irsa_role = aws.iam.Role(f"{project_name}-lbc-irsa-role",
-    assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.core.oidc_provider.arn, oidc_provider_url=eks_cluster.core.oidc_provider.url).apply(
+    assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.oidc_provider_arn, oidc_provider_url=eks_cluster.oidc_provider_url).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
             "Statement": [{
@@ -800,8 +737,8 @@ external_dns_sa_namespace = "kube-system"
 
 external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
-        oidc_provider_url=eks_cluster.core.oidc_provider.url
+        oidc_provider_arn=eks_cluster.oidc_provider_arn,
+        oidc_provider_url=eks_cluster.oidc_provider_url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -818,7 +755,7 @@ external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
         })
     ),
     tags=create_common_tags("external-dns-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
+    opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
 )
 
 aws.iam.RolePolicyAttachment(f"{project_name}-external-dns-irsa-policy-attachment",
@@ -933,8 +870,8 @@ efs_csi_controller_sa_name = "efs-csi-controller-sa"
 efs_csi_namespace = "kube-system"
 efs_csi_controller_irsa_role = aws.iam.Role(f"{project_name}-efs-csi-controller-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        arn=eks_cluster.core.oidc_provider.arn,
-        url=eks_cluster.core.oidc_provider.url
+        arn=eks_cluster.oidc_provider_arn,
+        url=eks_cluster.oidc_provider_url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -955,8 +892,8 @@ aws.iam.RolePolicyAttachment(f"{project_name}-efs-csi-controller-irsa-attach", r
 efs_csi_node_sa_name = "efs-csi-node-sa"
 efs_csi_node_irsa_role = aws.iam.Role(f"{project_name}-efs-csi-node-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        arn=eks_cluster.core.oidc_provider.arn,
-        url=eks_cluster.core.oidc_provider.url
+        arn=eks_cluster.oidc_provider_arn,
+        url=eks_cluster.oidc_provider_url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
