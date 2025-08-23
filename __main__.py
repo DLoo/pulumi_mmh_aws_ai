@@ -20,6 +20,7 @@ existing_private_subnet_ids = config.require_object("existing_private_subnet_ids
 # vpc_cidr = config.require("vpc_cidr")
 
 eks_cluster_version = config.get("eks_cluster_version") or "1.33"
+eks_cluster_autoscaler_version = config.get("eks_cluster_autoscaler_version") or "9.50.1" # Helm chart version
 eks_cloudwatch_observability_version = config.get("eks_cloudwatch_observability_version") or "v4.3.1-eksbuild.1"
 eks_ebs_csi_driver_version = config.get("eks_ebs_csi_driver_version") or "v1.47.0-eksbuild.1"
 eks_efs_csi_driver_version = config.get("eks_efs_csi_driver_version") or " 3.1.9"
@@ -396,6 +397,10 @@ nvidia_device_plugin = k8s.yaml.ConfigFile("nvidia-device-plugin",
         depends_on=[gpu_node_group]
     )
 )
+
+
+
+
 
 
 
@@ -856,9 +861,14 @@ aws_load_balancer_controller_chart = Chart(f"{project_name}-lbc-chart",
                 #         "verbs": ["get", "list", "watch"],
                 #     }
                 # ]
-            }
+            },
+            "enableCertManager": True, 
         }
     ), opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[lbc_irsa_role, ebs_csi_driver_addon, cert_manager_chart]))
+
+
+
+
 
 # kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
 # kubectl apply -f aws-lbc-crds.yaml
@@ -1167,8 +1177,173 @@ cloudwatch_observability_addon = eks.Addon(f"{project_name}-cloudwatch-observabi
 
 
 
+
+# ==============================================================================
+# --- CLUSTER AUTOSCALER ---
+# This component automatically adjusts the number of nodes in your EKS cluster.
+# It watches for pods that fail to schedule and for underutilized nodes, then
+# scales the corresponding Managed Node Group's Auto Scaling Group up or down.
+# ==============================================================================
+
+# 1. Define constants for the Cluster Autoscaler.
+
+cas_sa_name = "cluster-autoscaler"
+cas_namespace = "kube-system" # It is standard practice to install this in kube-system.
+
+# 2. Create the IAM Policy for the Cluster Autoscaler.
+# This policy grants the necessary permissions to describe and modify Auto Scaling Groups.
+# Sourced from the official Kubernetes autoscaler documentation for AWS.
+cluster_autoscaler_iam_policy = aws.iam.Policy(f"{project_name}-cas-policy",
+    name=f"{project_name}-ClusterAutoscalerPolicy",
+    description="IAM policy for the EKS Cluster Autoscaler",
+    policy=pulumi.Output.all(
+        eks_cluster_name=eks_cluster.eks_cluster.name,
+        # Get the cluster ARN to scope EKS permissions correctly
+        eks_cluster_arn=eks_cluster.eks_cluster.arn
+    ).apply(lambda args: json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                    "autoscaling:DescribeAutoScalingGroups",
+                    "autoscaling:DescribeAutoScalingInstances",
+                    "autoscaling:DescribeInstances",
+                    "autoscaling:DescribeLaunchConfigurations",
+                    "autoscaling:DescribeTags",
+                    "ec2:DescribeLaunchTemplateVersions",
+                    "ec2:DescribeInstanceTypes"
+                ],
+                "Resource": "*",
+                "Effect": "Allow"
+            },
+            {
+                "Action": [
+                    "autoscaling:SetDesiredCapacity",
+                    "autoscaling:TerminateInstanceInAutoScalingGroup",
+                    "autoscaling:UpdateAutoScalingGroup" # Also a good permission to have
+                ],
+                "Resource": f"arn:aws:autoscaling:{aws_region}:*:autoScalingGroup:*:autoScalingGroupName/*",
+                "Effect": "Allow",
+                "Condition": {
+                    "StringEquals": {
+                        f"autoscaling:ResourceTag/k8s.io/cluster-autoscaler/{args['eks_cluster_name']}": "owned"
+                    }
+                }
+            },
+            # --- THE FIX: ADD THIS STATEMENT ---
+            # This statement adds the permissions needed to query EKS Managed Node Group
+            # metadata for more intelligent scaling.
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "eks:DescribeNodegroup"
+                ],
+                # --- CORRECTED LINE ---
+                # Inside the .apply(), args['eks_cluster_arn'] is a regular string,
+                # so we can format it directly without a nested .apply().
+                "Resource": f"{args['eks_cluster_arn']}/nodegroup/*/*"
+            }
+        ]
+    }))
+)
+
+# 3. Create the IAM Role for the Service Account (IRSA).
+# This follows the same secure IRSA pattern used for other components.
+cluster_autoscaler_irsa_role = aws.iam.Role(f"{project_name}-cas-irsa-role",
+    assume_role_policy=pulumi.Output.all(
+        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+        oidc_provider_url=eks_cluster.core.oidc_provider.url
+    ).apply(
+        lambda args: json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"Federated": args["oidc_provider_arn"]},
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                    "StringEquals": {
+                        f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{cas_namespace}:{cas_sa_name}"
+                    }
+                }
+            }]
+        })
+    ),
+    tags=create_common_tags("cas-irsa-role"),
+    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
+)
+
+# 4. Attach the IAM policy to the role.
+aws.iam.RolePolicyAttachment(f"{project_name}-cas-irsa-policy-attachment",
+    role=cluster_autoscaler_irsa_role.name,
+    policy_arn=cluster_autoscaler_iam_policy.arn
+)
+
+
+# 5. Deploy the Cluster Autoscaler using its Helm Chart.
+cluster_autoscaler_chart = Chart(cas_sa_name,
+    ChartOpts(
+        chart="cluster-autoscaler",
+        version=eks_cluster_autoscaler_version,
+        fetch_opts=FetchOpts(repo="https://kubernetes.github.io/autoscaler"),
+        namespace=cas_namespace,
+        values={
+            # Tell the chart we're on AWS.
+            "cloudProvider": "aws",
+            
+            # This enables the discovery of node groups via tags.
+            # The cluster name must match exactly.
+            "autoDiscovery": {
+                "clusterName": eks_cluster.eks_cluster.name
+            },
+            
+            # Use the IRSA role created above.
+            "rbac": {
+                "serviceAccount": {
+                    "create": True,
+                    "name": cas_sa_name,
+                    "annotations": {
+                        "eks.amazonaws.com/role-arn": cluster_autoscaler_irsa_role.arn
+                    }
+                }
+            },
+            
+            "service": {
+                "annotations": {
+                    "service.beta.kubernetes.io/aws-load-balancer-managed": "false"
+                }
+            },
+            
+            # Best practice arguments
+            "extraArgs": {
+                "skip-nodes-with-system-pods": False,
+                "balance-similar-node-groups": True,
+                "logtostderr": True,
+                "stderrthreshold": "info",
+                "v": 2
+            }
+        }
+    ),
+    opts=pulumi.ResourceOptions(
+        provider=k8s_provider,
+        # Ensure the autoscaler is deployed only after the node groups it manages are available.
+        depends_on=[
+            cluster_autoscaler_irsa_role,
+            primary_node_group,
+            second_node_group,
+            gpu_node_group,
+            aws_load_balancer_controller_chart
+        ]
+    )
+)
+
+
+
+
+
+
+
 # 5. Velero
-velero_s3_bucket = aws.s3.BucketV2(f"{project_name}-velero-backups",
+velero_s3_bucket = aws.s3.Bucket(f"{project_name}-velero-backups",
     bucket=velero_s3_bucket_name,
     tags=create_common_tags("velero-backups"))
 
