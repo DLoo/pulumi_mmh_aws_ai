@@ -20,6 +20,9 @@ config:
     - m5.large
   pulumi_mmh_aws_ai:eks_nodegroup_instance_types:
     - m5.large
+  pulumi_mmh_aws_ai:eks_gpu_nodegroup_instance_types:
+    - g4dn.xlarge
+    # - g4dn.2xlarge
   pulumi_mmh_aws_ai:eks_node_desired_count: 1
   pulumi_mmh_aws_ai:eks_node_min_count: 1
   pulumi_mmh_aws_ai:eks_node_max_count: 4

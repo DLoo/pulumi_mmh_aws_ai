@@ -196,13 +196,73 @@ k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfi
 # --- MANAGED NODE GROUPS (Following Official Pulumi Pattern) ---
 # ==============================================================================
 
-# 1. Create the primary node group that replaces the old "default" one.
-#    It will automatically use the cluster's shared security group.
+# --- Launch Template for the Primary Node Group ---
+primary_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-primary-ng-lt",
+    name_prefix=f"{project_name}-primary-ng-lt-",
+    
+    # Define the instance type within the launch template
+    instance_type=node_config["instance_types"][0], # Assumes the first instance type in the list
+    
+    # Define the disk size within the launch template using block_device_mappings
+    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+        device_name="/dev/xvda", # The root device name for Amazon Linux 2
+        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+            volume_size=90,      # Set the desired disk size here
+            volume_type="gp3",   # It's good practice to specify gp3
+            delete_on_termination=True,
+        ),
+    )],
+    
+    # Enable detailed monitoring
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
+        enabled=True,
+    ),
+    
+    tags=create_common_tags("primary-ng-lt")
+)
+
+
+# --- Launch Template for the Second (m5.large) Node Group ---
+second_ng_instance_type = eks_nodegroup_instance_types[0].replace(".", "-")
+
+second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{second_ng_instance_type}-ng-lt",
+    name_prefix=f"{project_name}-{second_ng_instance_type}-ng-lt-",
+    
+    # Define this group's specific instance type
+    instance_type=eks_nodegroup_instance_types[0], # Assumes the first instance type in the list
+
+    # Define the disk size for this group as well
+    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+        device_name="/dev/xvda",
+        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+            volume_size=90,
+            volume_type="gp3",
+            delete_on_termination=True,
+        ),
+    )],
+    
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
+        enabled=True,
+    ),
+    
+    tags=create_common_tags(f"{second_ng_instance_type}-ng-lt")
+)
+
+
+# 1. Update the primary node group to use its dedicated launch template.
 primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
-    cluster=eks_cluster, # Associate with our cluster
+    cluster=eks_cluster,
     node_group_name=f"{project_name}-primary-nodes",
-    node_role=eks_node_instance_role, # Use the role you already defined
-    instance_types=node_config["instance_types"],
+    node_role=eks_node_instance_role,
+    
+    # REMOVED: instance_types and disk_size are now in the launch template.
+    
+    # Associate the custom launch template.
+    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+        id=primary_ng_launch_template.id,
+        version=primary_ng_launch_template.latest_version
+    ),
+    
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
@@ -216,26 +276,32 @@ primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
     )
 )
 
-# 2. Create your second node group. It's now a simple, repeatable pattern.
-#    It will also automatically use the same shared security group.
-m5_xlarge_node_group = eks.ManagedNodeGroup(f"{project_name}-m5-xlarge-ng",
-    cluster=eks_cluster, # Associate with the SAME cluster
-    node_group_name=f"{project_name}-m5-xlarge-nodes",
-    node_role=eks_node_instance_role, # Use the SAME role
-    instance_types=["m5.xlarge"],
+# 2. Update the second node group to use its dedicated launch template.
+second_node_group = eks.ManagedNodeGroup(f"{project_name}-{second_ng_instance_type}-ng",
+    cluster=eks_cluster,
+    node_group_name=f"{project_name}-{second_ng_instance_type}-nodes",
+    node_role=eks_node_instance_role,
+    
+    # REMOVED: instance_types and disk_size are now in the launch template.
+
+    # Associate its own launch template.
+    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+        id=second_ng_launch_template.id,
+        version=second_ng_launch_template.latest_version
+    ),
+    
     scaling_config=aws.eks.NodeGroupScalingConfigArgs(
         desired_size=node_config["desired_count"],
         min_size=node_config["min_count"],
         max_size=node_config["max_count"],
     ),
     subnet_ids=existing_private_subnet_ids,
-    labels={"workload-type": "general-purpose", "instance-type": "m5-xlarge"},
-    tags=create_common_tags("m5-xlarge-ng"),
+    labels={"workload-type": "general-purpose", "instance-type": second_ng_instance_type},
+    tags=create_common_tags(f"{second_ng_instance_type}-ng"),
     opts=pulumi.ResourceOptions(
         depends_on=[eks_cluster]
     )
 )
-
 
 
 
@@ -263,7 +329,7 @@ cert_manager_sa_name = f"{project_name}-cert-manager"
 cert_manager_role_name = f"{project_name}-cert-manager-irsa-role"
 
 # Manually construct the ARN to break the circular dependency for the permissions policy.
-aws_account_id = eks_cluster.oidc_provider_arn.apply(lambda arn: arn.split(':')[4])
+aws_account_id = eks_cluster.core.oidc_provider.arn.apply(lambda arn: arn.split(':')[4])
 cert_manager_role_arn = pulumi.Output.concat("arn:aws:iam::", aws_account_id, ":role/", cert_manager_role_name)
 
 # Define a single, consolidated permissions policy for cert-manager.
@@ -309,8 +375,8 @@ cert_manager_iam_policy = aws.iam.Policy(f"{project_name}-cert-manager-policy",
 cert_manager_irsa_role = aws.iam.Role(f"{project_name}-cert-manager-irsa-role",
     name=cert_manager_role_name,
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.oidc_provider_arn,
-        oidc_provider_url=eks_cluster.oidc_provider_url
+        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+        oidc_provider_url=eks_cluster.core.oidc_provider.url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -504,8 +570,8 @@ ebs_csi_policy = aws.iam.Policy(f"{project_name}-ebs-csi-policy",
 # 2. Create the IAM Role for the Service Account.
 ebs_csi_irsa_role = aws.iam.Role(f"{project_name}-ebs-csi-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.oidc_provider_arn,
-        oidc_provider_url=eks_cluster.oidc_provider_url
+        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+        oidc_provider_url=eks_cluster.core.oidc_provider.url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -642,7 +708,7 @@ lbc_sa_name = "aws-load-balancer-controller"
 lbc_sa_namespace = "kube-system"
 
 lbc_irsa_role = aws.iam.Role(f"{project_name}-lbc-irsa-role",
-    assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.oidc_provider_arn, oidc_provider_url=eks_cluster.oidc_provider_url).apply(
+    assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.core.oidc_provider.arn, oidc_provider_url=eks_cluster.core.oidc_provider.url).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
             "Statement": [{
@@ -737,8 +803,8 @@ external_dns_sa_namespace = "kube-system"
 
 external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.oidc_provider_arn,
-        oidc_provider_url=eks_cluster.oidc_provider_url
+        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+        oidc_provider_url=eks_cluster.core.oidc_provider.url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -755,7 +821,7 @@ external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
         })
     ),
     tags=create_common_tags("external-dns-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
+    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
 )
 
 aws.iam.RolePolicyAttachment(f"{project_name}-external-dns-irsa-policy-attachment",
@@ -812,7 +878,7 @@ efs_ingress_rule = aws.vpc.SecurityGroupIngressRule(f"{project_name}-efs-ingress
     ip_protocol="tcp",
     from_port=2049,  # NFS port
     to_port=2049,
-    referenced_security_group_id=eks_cluster.node_security_group_id
+    referenced_security_group_id=eks_cluster.cluster_security_group_id
 )
 
 # 3. Create the EFS File System.
@@ -870,8 +936,8 @@ efs_csi_controller_sa_name = "efs-csi-controller-sa"
 efs_csi_namespace = "kube-system"
 efs_csi_controller_irsa_role = aws.iam.Role(f"{project_name}-efs-csi-controller-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        arn=eks_cluster.oidc_provider_arn,
-        url=eks_cluster.oidc_provider_url
+        arn=eks_cluster.core.oidc_provider.arn,
+        url=eks_cluster.core.oidc_provider.url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -892,8 +958,8 @@ aws.iam.RolePolicyAttachment(f"{project_name}-efs-csi-controller-irsa-attach", r
 efs_csi_node_sa_name = "efs-csi-node-sa"
 efs_csi_node_irsa_role = aws.iam.Role(f"{project_name}-efs-csi-node-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        arn=eks_cluster.oidc_provider_arn,
-        url=eks_cluster.oidc_provider_url
+        arn=eks_cluster.core.oidc_provider.arn,
+        url=eks_cluster.core.oidc_provider.url
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -1007,49 +1073,148 @@ cloudwatch_observability_addon = eks.Addon(f"{project_name}-cloudwatch-observabi
 
 
 
-# --- Velero for Backups ---
-# AMENDED: Changed from deprecated `BucketV2` to `Bucket`.
-velero_s3_bucket = aws.s3.Bucket(f"{project_name}-velero-backups",
+# 5. Velero
+velero_s3_bucket = aws.s3.BucketV2(f"{project_name}-velero-backups",
     bucket=velero_s3_bucket_name,
     tags=create_common_tags("velero-backups"))
+
 aws.s3.BucketPublicAccessBlock(f"{project_name}-velero-backups-public-access",
-    bucket=velero_s3_bucket.id, block_public_acls=True, block_public_policy=True, ignore_public_acls=True, restrict_public_buckets=True)
+    bucket=velero_s3_bucket.id,
+    block_public_acls=True,
+    block_public_policy=True,
+    ignore_public_acls=True,
+    restrict_public_buckets=True)
+
 velero_iam_user = aws.iam.User(f"{project_name}-velero-user", name=f"{project_name}-velero")
-velero_policy_json = velero_s3_bucket.bucket.apply(lambda bucket_name: json.dumps({
+
+velero_policy_json = pulumi.Output.all(bucket_name=velero_s3_bucket.bucket).apply(lambda args: json.dumps({
     "Version": "2012-10-17",
     "Statement": [
-        {"Effect": "Allow", "Action": ["ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:CreateTags", "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:DeleteSnapshot"], "Resource": "*"},
-        {"Effect": "Allow", "Action": ["s3:GetObject", "s3:DeleteObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"], "Resource": [f"arn:aws:s3:::{bucket_name}/*"]},
-        {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": [f"arn:aws:s3:::{bucket_name}"]}
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:CreateTags",
+                "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:DeleteSnapshot"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject", "s3:DeleteObject", "s3:PutObject",
+                "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"
+            ],
+            "Resource": [f"arn:aws:s3:::{args['bucket_name']}/*"]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket"],
+            "Resource": [f"arn:aws:s3:::{args['bucket_name']}"]
+        }
     ]
 }))
-velero_iam_policy = aws.iam.Policy(f"{project_name}-velero-policy", name=f"{project_name}-VeleroBackupPolicy", policy=velero_policy_json)
-aws.iam.UserPolicyAttachment(f"{project_name}-velero-user-policy-attachment", user=velero_iam_user.name, policy_arn=velero_iam_policy.arn)
+
+velero_iam_policy = aws.iam.Policy(f"{project_name}-velero-policy",
+    name=f"{project_name}-VeleroBackupPolicy",
+    policy=velero_policy_json)
+
+aws.iam.UserPolicyAttachment(f"{project_name}-velero-user-policy-attachment",
+    user=velero_iam_user.name,
+    policy_arn=velero_iam_policy.arn)
+
 velero_access_key = aws.iam.AccessKey(f"{project_name}-velero-access-key", user=velero_iam_user.name)
-velero_namespace = k8s.core.v1.Namespace("velero-ns", metadata={"name": "velero"}, opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
-velero_secret = k8s.core.v1.Secret("velero-cloud-credentials",
-    metadata=k8s.meta.v1.ObjectMetaArgs(name="cloud-credentials", namespace=velero_namespace.metadata["name"]),
-    string_data={"cloud": pulumi.Output.all(id=velero_access_key.id, secret=velero_access_key.secret).apply(lambda args: f"[default]\naws_access_key_id={args['id']}\naws_secret_access_key={args['secret']}")},
+
+# velero_credentials_file_content = pulumi.Output.all(
+#     key_id=velero_access_key.id,
+#     secret_key=velero_access_key.secret
+# ).apply(lambda args: f"[default]\naws_access_key_id={args['key_id']}\naws_secret_access_key={args['secret_key']}")
+
+velero_namespace = k8s.core.v1.Namespace("velero-ns",
+    metadata={"name": "velero"},
+    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
+
+velero_secret = k8s.core.v1.Secret(
+    "velero-cloud-credentials",
+    metadata=k8s.meta.v1.ObjectMetaArgs(
+        name="cloud-credentials",
+        namespace=velero_namespace.metadata["name"],
+    ),
+    # THE FIX: Use pulumi.Output.all() to get both id and secret together.
+    string_data={
+        "cloud": pulumi.Output.all(
+            id=velero_access_key.id,
+            secret=velero_access_key.secret
+        ).apply(
+            lambda args: f"[default]\naws_access_key_id={args['id']}\naws_secret_access_key={args['secret']}"
+        )
+    },
     type="Opaque",
-    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[velero_namespace, velero_access_key], protect=eks_velero_protect))
+    opts=pulumi.ResourceOptions(
+        provider=k8s_provider,
+        depends_on=[velero_namespace, velero_access_key],
+        protect=eks_velero_protect
+    )
+)
+
 velero_chart = Chart(f"{project_name}-velero-chart",
     ChartOpts(
-        chart="velero", version=eks_velero_version, fetch_opts=FetchOpts(repo="https://vmware-tanzu.github.io/helm-charts"),
+        chart="velero",
+        version=eks_velero_version,
+        fetch_opts=FetchOpts(repo="https://vmware-tanzu.github.io/helm-charts"),
         namespace=velero_namespace.metadata["name"],
         values={
-            "configuration": {
-                "backupStorageLocation": [{"name": "default", "provider": "aws", "bucket": velero_s3_bucket.bucket, "config": {"region": aws_region}}],
-                "volumeSnapshotLocation": [{"name": "default", "provider": "aws", "config": {"region": aws_region}}]
+             "configuration": {
+                "backupStorageLocation": [{
+                    "name": "default",
+                    "provider": "aws",
+                    "bucket": velero_s3_bucket.bucket,
+                    "config": {
+                        "region": aws_region
+                    }
+                }],
+                "volumeSnapshotLocation": [{
+                    "name": "default",
+                    "provider": "aws",
+                    "config": {
+                        "region": aws_region
+                    }
+                }]
             },
-            "credentials": {"useSecret": True, "existingSecret": velero_secret.metadata["name"]},
+            "credentials": {
+                "useSecret": True,
+                # The name of the k8s.core.v1.Secret resource we created earlier
+                "existingSecret": velero_secret.metadata["name"]
+            },
             "snapshotsEnabled": True,
-            "initContainers": [{"name": "velero-plugin-for-aws", "image": "velero/velero-plugin-for-aws:v1.9.0", "imagePullPolicy": "IfNotPresent", "volumeMounts": [{"mountPath": "/target", "name": "plugins"}]}],
-            "metrics": {"enabled": False},
+            # The `extraPlugins` key is not standard. Plugins are added via initContainers.
+            # This is the correct way to install the AWS plugin.
+            "initContainers": [
+                {
+                    "name": "velero-plugin-for-aws",
+                    "image": "velero/velero-plugin-for-aws:v1.9.0", # Use a recent, compatible version
+                    "imagePullPolicy": "IfNotPresent",
+                    "volumeMounts": [{"mountPath": "/target", "name": "plugins"}],
+                }
+            ],
+            "metrics": {
+                "enabled": False
+            },
+            # This can be set to false as it is not needed for most backup/restore cases
+            # and is the source of the webhook error.
             "deployNodeAgent": True,
         }
-    ),
-    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[velero_secret, gp3_storage_class]))
-
+    ),     
+    opts=pulumi.ResourceOptions(
+        provider=k8s_provider,
+        # --- FIX 2: Add explicit dependency on the LBC chart ---
+        # This ensures the Velero chart waits until the LBC webhook is fully ready.
+        depends_on=[
+            velero_secret,
+            gp3_storage_class,
+            # aws_load_balancer_controller_chart # <-- This is the crucial addition for the webhook error
+        ]
+    )
+)
 
 
 
