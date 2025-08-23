@@ -32,6 +32,7 @@ eks_aws_load_balancer_controller_version = config.get("eks_aws_load_balancer_con
 route53_hosted_zone_id = config.require("route53_hosted_zone_id")
 external_dns_domains = config.require_object("external_dns_domains")
 eks_nodegroup_instance_types = config.get_object("eks_nodegroup_instance_types") or ["m5.large"]
+eks_gpu_nodegroup_instance_types = config.get_object("eks_gpu_nodegroup_instance_types") or ["g4dn.xlarge"]
 
 
 eks_efs_protect = config.get_bool("eks_efs_protect") if config.get("eks_efs_protect") is not None else True
@@ -192,9 +193,12 @@ kubeconfig = eks_cluster.kubeconfig
 k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfig)
 
 
-# ==============================================================================
-# --- MANAGED NODE GROUPS (Following Official Pulumi Pattern) ---
-# ==============================================================================
+
+
+
+
+
+
 
 # --- Launch Template for the Primary Node Group ---
 primary_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-primary-ng-lt",
@@ -248,14 +252,42 @@ second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{second_ng_i
     tags=create_common_tags(f"{second_ng_instance_type}-ng-lt")
 )
 
+# ==============================================================================
+# --- NEW: Launch Template for the GPU Node Group ---
+# ==============================================================================
+gpu_ng_instance_type = eks_gpu_nodegroup_instance_types[0]
+gpu_ng_instance_type_sanitized = gpu_ng_instance_type.replace(".", "-")
+
+gpu_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt",
+    name_prefix=f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt-",
+    
+    # Define this group's specific GPU instance type
+    instance_type=gpu_ng_instance_type,
+
+    # Define the disk size for the GPU group
+    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+        device_name="/dev/xvda",
+        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+            volume_size=250, # GPUs often benefit from slightly larger root volumes
+            volume_type="gp3",
+            delete_on_termination=True,
+        ),
+    )],
+    
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
+        enabled=True,
+    ),
+    
+    tags=create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng-lt")
+)
+
 
 # 1. Update the primary node group to use its dedicated launch template.
 primary_node_group = eks.ManagedNodeGroup(f"{project_name}-primary-ng",
     cluster=eks_cluster,
     node_group_name=f"{project_name}-primary-nodes",
     node_role=eks_node_instance_role,
-    
-    # REMOVED: instance_types and disk_size are now in the launch template.
+
     
     # Associate the custom launch template.
     launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
@@ -281,8 +313,6 @@ second_node_group = eks.ManagedNodeGroup(f"{project_name}-{second_ng_instance_ty
     cluster=eks_cluster,
     node_group_name=f"{project_name}-{second_ng_instance_type}-nodes",
     node_role=eks_node_instance_role,
-    
-    # REMOVED: instance_types and disk_size are now in the launch template.
 
     # Associate its own launch template.
     launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
@@ -300,6 +330,70 @@ second_node_group = eks.ManagedNodeGroup(f"{project_name}-{second_ng_instance_ty
     tags=create_common_tags(f"{second_ng_instance_type}-ng"),
     opts=pulumi.ResourceOptions(
         depends_on=[eks_cluster]
+    )
+)
+
+
+# ==============================================================================
+# --- NEW: GPU Enabled Managed Node Group ---
+# ==============================================================================
+gpu_node_group = eks.ManagedNodeGroup(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng",
+    cluster=eks_cluster,
+    node_group_name=f"{project_name}-{gpu_ng_instance_type_sanitized}-nodes",
+    node_role=eks_node_instance_role,
+    
+    ami_type="AL2023_x86_64_NVIDIA",
+    
+    # Associate the GPU launch template.
+    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+        id=gpu_ng_launch_template.id,
+        version=gpu_ng_launch_template.latest_version
+    ),
+    
+    # Using the same scaling config as other nodes for simplicity.
+    # You could create a separate config block for GPU scaling if needed.
+    scaling_config=aws.eks.NodeGroupScalingConfigArgs(
+        desired_size=node_config["desired_count"],
+        min_size=node_config["min_count"],
+        max_size=node_config["max_count"],
+    ),
+    
+    subnet_ids=existing_private_subnet_ids,
+    labels={
+        "workload-type": "gpu",
+        "instance-type": gpu_ng_instance_type_sanitized,
+        "nvidia.com/gpu": "true" # Common label for identifying GPU nodes
+    },
+    
+    # BEST PRACTICE: Taint GPU nodes to prevent non-GPU workloads from being scheduled on them.
+    # Pods must have a corresponding "toleration" to be scheduled on these nodes.
+    taints=[aws.eks.NodeGroupTaintArgs(
+        key="nvidia.com/gpu",
+        value="true",
+        effect="NO_SCHEDULE",
+    )],
+    
+    tags=create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng"),
+    opts=pulumi.ResourceOptions(
+        depends_on=[eks_cluster]
+    )
+)
+
+
+# ==============================================================================
+# --- NEW: NVIDIA DEVICE PLUGIN (For GPU Node Support) ---
+# ==============================================================================
+# This daemonset is required for Kubernetes to recognize and schedule pods on GPU nodes.
+# It discovers the GPUs on each node and exposes them as schedulable resources.
+# It must be installed for GPU workloads to function correctly.
+# https://docs.aws.amazon.com/eks/latest/userguide/create-managed-node-group.html
+    # kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml
+nvidia_device_plugin = k8s.yaml.ConfigFile("nvidia-device-plugin",
+    file="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml",
+    opts=pulumi.ResourceOptions(
+        provider=k8s_provider,
+        # Ensure GPU nodes are ready before applying the plugin.
+        depends_on=[gpu_node_group]
     )
 )
 
@@ -393,7 +487,7 @@ cert_manager_irsa_role = aws.iam.Role(f"{project_name}-cert-manager-irsa-role",
         })
     ),
     tags=create_common_tags("cert-manager-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
+    opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
 )
 
 # Attach the single, complete policy to the role.
