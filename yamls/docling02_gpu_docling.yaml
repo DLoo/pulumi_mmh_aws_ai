@@ -44,6 +44,10 @@ spec:
         - containerPort: 5001
         # 'env' allows you to set environment variables inside the container.
         env:
+        # - name: UVICORN_HOST
+          # value: docling-svc.docling.svc.cluster.local
+        - name: UVICORN_PORT
+          value: "5001"
         - name: DOCLING_SERVE_ENABLE_UI
           value: "true"
         - name: DOCLING_SERVE_ENABLE_REMOTE_SERVICES
