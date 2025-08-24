@@ -1,0 +1,50 @@
+---
+# 6. An Ingress to expose the Service to the internet via an AWS ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-webui-ingress
+  namespace: chatai
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # alb.ingress.kubernetes.io/scheme: internal
+
+    alb.ingress.kubernetes.io/target-type: ip
+
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+    
+    # docling.app.mmh-global.com
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/924f968f-9d5f-4d2b-9726-26bc0c80a17d
+    
+    # docling.dev-app.mmh-global.com
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:806342426990:certificate/b5115dae-f291-42f2-b788-200601200add
+
+
+
+    alb.ingress.kubernetes.io/proxy-read-timeout: "33600"
+    alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
+    # alb.ingress.kubernetes.io/rewrite-target: /
+
+spec:
+  ingressClassName: alb
+  # This section enables TLS on the ALB using the cert from cert-manager
+  # tls:
+  #   - hosts:
+  #     - chatai.app.mmh-global.com 
+  #     secretName: chatai-tls-secret # cert-manager will create this secret for us
+  rules:
+    # - host: k8s-chatai-openwebu-dfd767cdbf-1006398550.ap-southeast-1.elb.amazonaws.com
+    # - host: chatai.app.mmh-global.com # The hostname for the Ingress
+    - host: docling.dev-app.mmh-global.com # The hostname for the Ingress
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: docling-svc
+                port:
+                  number: 5001
+         

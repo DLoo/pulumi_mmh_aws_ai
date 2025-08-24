@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n-app-webui
+  namespace: n8n-app
+spec:
+  ports:
+    - name: n8n-app-webui
+      port: 80
+      targetPort: 5678
+  selector:
+    app: n8n-app-webui
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-app-webui
+  namespace: n8n-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: n8n-app-webui
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: n8n-app-webui
+    spec:
+      restartPolicy: Always
+      volumes:
+      - name: n8n-claim0
+        persistentVolumeClaim:
+          claimName: n8n-app-fs-pvc
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c']
+          args:
+          - |
+            echo "Waiting for PostgreSQL to be ready..."
+            until nc -zv postgres-0.postgres-svc.n8n-app.svc.cluster.local 5432; do
+              echo "PostgreSQL not ready yet, sleeping for 5s..."
+              sleep 5
+            done
+            echo "PostgreSQL is ready!"
+          volumeMounts:
+            - name: n8n-claim0
+              mountPath: /data
+          env:
+          - name: PG_USER
+            valueFrom:
+              secretKeyRef:
+                name: postgres-credentials
+                key: POSTGRES_USER
+          - name: PG_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: postgres-credentials
+                key: POSTGRES_PASSWORD
+          - name: PG_DB
+            valueFrom:
+              secretKeyRef:
+                name: postgres-credentials
+                key: POSTGRES_DB
+      containers:
+        - name: n8n-app-webui
+          image: n8nio/n8n
+          # command: ["/bin/sh", "-c"]
+          # args:
+          #   - |
+          #     # Construct and export DATABASE_URL using shell expansion
+          #     export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@postgres-0.postgres-svc.n8n-app.svc.cluster.local:5432/${PG_DB}"
+              
+          #     # Log the constructed URL (mask password in a real production log if desired)
+          #     echo "Attempting to start DATABASE_URL: postgresql://${PG_USER}:********@postgres-0.postgres-svc.n8n-app.svc.cluster.local:5432/${PG_DB}"
+              
+          #     sleep 5; n8n start
+          env:
+            - name: N8N_PROTOCOL
+              value: http
+            - name: N8N_PORT
+              value: "5678"
+            - name: N8N_SECURE_COOKIE
+              value: "false"
+            - name: N8N_RUNNERS_ENABLED
+              value: "true"
+            - name: DB_TYPE
+              value: "postgresdb"
+            - name: DB_POSTGRESDB_HOST
+              value: "postgres-0.postgres-svc.n8n-app.svc.cluster.local"
+            - name: DB_POSTGRESDB_PORT
+              value: "5432"
+            - name: DB_POSTGRESDB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_DB
+            - name: DB_POSTGRESDB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
+
+            # - name: PG_USER
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: postgres-credentials
+            #       key: POSTGRES_USER
+            # - name: PG_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: postgres-credentials
+            #       key: POSTGRES_PASSWORD
+            # - name: PG_DB
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: postgres-credentials
+            #       key: POSTGRES_DB
+          
+          ports:
+            - containerPort: 5678
+              # protocol: TCP
+          volumeMounts:
+            - name: n8n-claim0
+              mountPath: /home/node/.n8n
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          # livenessProbe:
+          #   httpGet:
+          #     path: /healthz
+          #     port: 8080
+          #   initialDelaySeconds: 120
+          #   periodSeconds: 10
+          #   failureThreshold: 5
+          # readinessProbe:
+          #   httpGet:
+          #     path: /healthz
+          #     port: 8080
+          #   initialDelaySeconds: 90
+          #   periodSeconds: 5
+          #   successThreshold: 1
+
+
+
+
+

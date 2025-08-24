@@ -1,0 +1,26 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-app-db-pvc
+  namespace: n8n-app
+spec:
+  storageClassName: ebs-retain-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 25Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-app-fs-pvc
+  namespace: n8n-app
+spec:
+  storageClassName: efs-retain-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

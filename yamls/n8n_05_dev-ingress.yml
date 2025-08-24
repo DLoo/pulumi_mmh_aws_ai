@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: n8n-app
+  namespace: n8n-app
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # This defines the type of traffic the ALB will listen for
+    alb.ingress.kubernetes.io/target-type: ip
+    # n8n.dev-app.mmh-global.com
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:806342426990:certificate/ff8695b1-95e8-4694-9564-e4db90acefe3
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+
+spec:
+  ingressClassName: alb
+#  tls:
+#  - hosts:
+#    - www.k8s.mmh
+#    secretName: k8s-mmh-tls
+  rules:
+  - host: n8n.dev-app.mmh-global.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: n8n-app-webui
+            port:
+              number: 80
