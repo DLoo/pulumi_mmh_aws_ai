@@ -26,7 +26,7 @@ eks_ebs_csi_driver_version = config.get("eks_ebs_csi_driver_version") or "v1.47.
 eks_efs_csi_driver_version = config.get("eks_efs_csi_driver_version") or " 3.1.9"
 eks_volume_snapshotter_version = config.get("eks_volume_snapshotter_version") or "4.1.0"
 eks_cert_manager_version = config.get("eks_cert_manager_version") or "v1.18.0"
-eks_velero_version = config.get("eks_velero_version") or "10.0.4"
+eks_velero_version = config.get("eks_velero_version") or "10.1.0"
 eks_aws_load_balancer_controller_version = config.get("eks_aws_load_balancer_controller_version") or "1.13.4"
 # eks_cluster_autoscaler_version = config.get("eks_cluster_autoscaler_version") or "9.46.6" # Helm chart version for CAS
 # eks_velero_aws_plugin_version = config.require("eks_velero_aws_plugin_version")
@@ -1425,14 +1425,19 @@ velero_secret = k8s.core.v1.Secret(
     )
 )
 
-velero_chart = Chart(f"{project_name}-velero-chart",
+velero_chart = Chart("velero", # <-- CRITICAL CHANGE 1: The Pulumi resource name is now "velero"
     ChartOpts(
         chart="velero",
         version=eks_velero_version,
         fetch_opts=FetchOpts(repo="https://vmware-tanzu.github.io/helm-charts"),
         namespace=velero_namespace.metadata["name"],
         values={
-             "configuration": {
+            # --- CRITICAL CHANGE 2: Use the official method from values.yaml ---
+            "nameOverride": "velero",
+            
+            # We no longer need the 'envVars' block because the name will now match the default.
+            
+            "configuration": {
                 "backupStorageLocation": [{
                     "name": "default",
                     "provider": "aws",
@@ -1451,16 +1456,13 @@ velero_chart = Chart(f"{project_name}-velero-chart",
             },
             "credentials": {
                 "useSecret": True,
-                # The name of the k8s.core.v1.Secret resource we created earlier
                 "existingSecret": velero_secret.metadata["name"]
             },
             "snapshotsEnabled": True,
-            # The `extraPlugins` key is not standard. Plugins are added via initContainers.
-            # This is the correct way to install the AWS plugin.
             "initContainers": [
                 {
                     "name": "velero-plugin-for-aws",
-                    "image": "velero/velero-plugin-for-aws:v1.9.0", # Use a recent, compatible version
+                    "image": "velero/velero-plugin-for-aws:v1.9.0",
                     "imagePullPolicy": "IfNotPresent",
                     "volumeMounts": [{"mountPath": "/target", "name": "plugins"}],
                 }
@@ -1468,19 +1470,15 @@ velero_chart = Chart(f"{project_name}-velero-chart",
             "metrics": {
                 "enabled": False
             },
-            # This can be set to false as it is not needed for most backup/restore cases
-            # and is the source of the webhook error.
             "deployNodeAgent": True,
         }
     ),     
     opts=pulumi.ResourceOptions(
         provider=k8s_provider,
-        # --- FIX 2: Add explicit dependency on the LBC chart ---
-        # This ensures the Velero chart waits until the LBC webhook is fully ready.
         depends_on=[
             velero_secret,
             gp3_storage_class,
-            # aws_load_balancer_controller_chart # <-- This is the crucial addition for the webhook error
+            aws_load_balancer_controller_chart
         ]
     )
 )

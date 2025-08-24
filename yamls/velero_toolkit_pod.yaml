@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: velero-troubleshoot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velero-restore-helper-sa
+  namespace: velero-troubleshoot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: velero-restore-helper-role
+rules:
+- apiGroups: ["velero.io"]
+  resources: ["restores"]
+  verbs: ["create"]
+- apiGroups: ["velero.io"]
+  resources: ["backups"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: velero-restore-helper-binding
+subjects:
+- kind: ServiceAccount
+  name: velero-restore-helper-sa
+  namespace: velero-troubleshoot
+roleRef:
+  kind: ClusterRole
+  name: velero-restore-helper-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: velero-restore-helper
+  namespace: velero-troubleshoot
+spec:
+  serviceAccountName: velero-restore-helper-sa
+  containers:
+  - name: velero
+    # Use the same version as your CLI client for consistency
+    image: velero/velero:v1.16.1
+    # Command to keep the pod running so we can exec into it
+    command: ["/bin/sh", "-c", "sleep infinity"]
+  restartPolicy: Never

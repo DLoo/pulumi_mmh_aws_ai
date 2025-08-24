@@ -1,0 +1,9 @@
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: manual-chatai-restore
+  namespace: velero
+spec:
+  backupName: chatai-250824
+  includedNamespaces:
+  - chatai
