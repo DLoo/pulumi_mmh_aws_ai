@@ -59,4 +59,17 @@ spec:
                 name: open-webui-svc
                 port:
                   number: 80
+
+    - host: chatai.app.musimmas.com # The hostname for the Ingress
+    # - host: chatai.app.musimmas.com # The hostname for the Ingress
+    # - http:
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui-svc
+                port:
+                  number: 80
          
