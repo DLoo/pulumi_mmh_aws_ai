@@ -37,7 +37,7 @@ spec:
       - name: docling-container
         # The container image to pull and run.
         # gpu support 
-        image: quay.io/docling-project/docling-serve-cu124
+        image: quay.io/docling-project/docling-serve-cu124:v1.0.0
         # image: quay.io/docling-project/docling-serve:latest
         # 'ports' lists the network ports to expose from the container.
         ports:
@@ -46,18 +46,27 @@ spec:
         env:
         # - name: UVICORN_HOST
           # value: docling-svc.docling.svc.cluster.local
-        - name: UVICORN_PORT
-          value: "5001"
+        # - name: UVICORN_PORT
+        #   value: "5001"
         - name: DOCLING_SERVE_ENABLE_UI
           value: "true"
         - name: DOCLING_SERVE_ENABLE_REMOTE_SERVICES
           value: "true"
         - name: NVIDIA_VISIBLE_DEVICES
           value: "all"
-        - name: DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT
-          value: "800"
+        # - name: DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT
+          # value: "800"
         - name: DOCLING_SERVE_MAX_SYNC_WAIT
           value: "600"
+        # - name: DOCLING_SERVE_LOAD_MODELS_AT_BOOT
+        #   value: "true"
+        # - name: UVICORN_ROOT_PATH
+        #   value: "/ui"
+
+        # --- FIX 2: Specify which OCR languages to load ---
+        # Use 3-letter ISO 639-2/T codes, separated by commas.
+        - name: DOCLING_OCR_LANGUAGES
+          value: "eng,deu,fra,spa"
         # --- OCR Configuration ---
         # Specify the languages for OCR processing.
         # Use 3-letter ISO 639-2/T codes. You can add more, separated by commas.
@@ -72,6 +81,20 @@ spec:
           limits:
             memory: "4Gi"
             cpu: "2"
+        livenessProbe:
+          httpGet:
+            # Use a path that returns 200 OK
+            path: /docs
+            port: 5001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            # Use a path that returns 200 OK
+            path: /docs
+            port: 5001
+          initialDelaySeconds: 15
+          periodSeconds: 5
 
 ---
 # This section defines the Service. A '---' separator is used to include multiple Kubernetes objects in one file.

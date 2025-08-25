@@ -11,6 +11,11 @@ metadata:
 
     alb.ingress.kubernetes.io/target-type: ip
 
+    # --- Health Check Configuration ---
+    # Point health checks to a valid endpoint.
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-port: '5001'
+
     # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # Ensure ALB listens on 443
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
     alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
@@ -27,6 +32,10 @@ metadata:
     alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
     # alb.ingress.kubernetes.io/rewrite-target: /
 
+    # --- Session Stickiness for Gradio ---
+    # Enable stickiness to ensure a client stays connected to the same pod.
+    alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.type=lb_cookie,stickiness.lb_cookie.duration_seconds=3600
+
 spec:
   ingressClassName: alb
   # This section enables TLS on the ALB using the cert from cert-manager
@@ -40,6 +49,7 @@ spec:
     - host: docling.dev-app.mmh-global.com # The hostname for the Ingress
       http:
         paths:
+          # Rule 1: Redirect root path "/" to "/ui/" using the action defined above.
           - path: /
             pathType: Prefix
             backend:
@@ -47,4 +57,22 @@ spec:
                 name: docling-svc
                 port:
                   number: 5001
+
+          # # Rule 2: Forward UI traffic to the docling service.
+          # - path: /ui
+          #   pathType: Prefix
+          #   backend:
+          #     service:
+          #       name: docling-svc
+          #       port:
+          #         number: 5001
+
+          # # Rule 3: Forward API traffic to the docling service.
+          # - path: /v1/
+          #   pathType: Prefix
+          #   backend:
+          #     service:
+          #       name: docling-svc
+          #       port:
+          #         number: 5001
          
