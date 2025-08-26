@@ -1,0 +1,36 @@
+---
+# 6. An Ingress to expose the Service to the internet via an AWS ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: grafana
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+    
+    # monitoring.app.mmh-global.com
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/7c15ee2b-b31d-46e4-a7e7-15361f44705d
+
+    alb.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    alb.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # alb.ingress.kubernetes.io/rewrite-target: /
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+
+spec:
+  ingressClassName: alb
+
+  rules:
+    - host: monitoring.app.mmh-global.com # The hostname for the Ingress
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana-svc
+                port:
+                  number: 3000
+         

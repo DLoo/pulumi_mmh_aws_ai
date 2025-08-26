@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grafana
+
+
+# Help documentation for Grafana setup:
+# https://grafana.com/docs/grafana/latest/setup-grafana/installation/kubernetes/
+# To sign in, enter admin for both the username and password.
+
+# Add Data Source
+# select "CloudWatch" from the list of data sources
+# Name: CloudWatch
+# Default: check the box
+# Auth Provider: Access & secret key
+
+# At AWS console, go to IAM, Users, select the user you created for "grafana-user"
+# Select Attach policies directly
+# Search for "CloudWatchReadyOnlyAccess" and check the box
+# Click Next: Tags, Next: Review, then click "Create user"
+
+# Go back to User List, select the user you created for "grafana-user"
+# Select the Security credentials tab, then click "Create access key"
+# Use case: select "Command Line Interface (CLI)"; checked confirmation box; click "Next"
+# Copy the Access key ID and Secret access key to a safe place
+# Go back to Grafana, and enter the Access key ID and Secret access key
+# Click Save & test at the bottom
+
+# Add Dashboard
+# Click the + icon on the left menu and select Import

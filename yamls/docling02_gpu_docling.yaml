@@ -76,10 +76,10 @@ spec:
         # 'resources' specifies the CPU and memory requirements for the container.
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: 500Mi
+            cpu: "250m"
           limits:
-            memory: "4Gi"
+            memory: 3Gi
             cpu: "2"
         livenessProbe:
           httpGet:

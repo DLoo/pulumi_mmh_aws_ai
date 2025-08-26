@@ -45,7 +45,7 @@ spec:
           args:
           - |
             echo "Waiting for PostgreSQL to be ready..."
-            until nc -zv postgres-0.postgres-svc.nocodb-app.svc.cluster.local 5432; do
+            until nc -zv postgres-0.postgres-svc.nocodb.svc.cluster.local 5432; do
               echo "PostgreSQL not ready yet, sleeping for 5s..."
               sleep 5
             done
@@ -74,16 +74,16 @@ spec:
           # args:
           #   - |
           #     # Construct and export DATABASE_URL using shell expansion
-          #     export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@postgres-0.postgres-svc.nocodb-app.svc.cluster.local:5432/${PG_DB}"
+          #     export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@postgres-0.postgres-svc.nocodb.svc.cluster.local:5432/${PG_DB}"
               
           #     # Log the constructed URL (mask password in a real production log if desired)
-          #     echo "Attempting to start DATABASE_URL: postgresql://${PG_USER}:********@postgres-0.postgres-svc.nocodb-app.svc.cluster.local:5432/${PG_DB}"
+          #     echo "Attempting to start DATABASE_URL: postgresql://${PG_USER}:********@postgres-0.postgres-svc.nocodb.svc.cluster.local:5432/${PG_DB}"
           #     sleep 10000
               
           env:
             # openssl rand -hex 32
             - name: DATABASE_URL
-              value:  postgresql://dbadmin:Done8212@postgres-0.postgres-svc.nocodb-app.svc.cluster.local:5432/nocodb
+              value:  postgresql://dbadmin:Done8212@postgres-0.postgres-svc.nocodb.svc.cluster.local:5432/nocodb
             - name: NC_AUTH_JWT_SECRET
               value: 569a1821-0a93-45e8-87ab-eb857f20a010
             
@@ -112,11 +112,11 @@ spec:
 
           resources:
             requests:
-              cpu: 500m
-              memory: 1Gi
+              cpu: 250m
+              memory: 250Mi
             limits:
-              cpu: 2000m
-              memory: 4Gi
+              cpu: 1000m
+              memory: 1Gi
           # livenessProbe:
           #   httpGet:
           #     path: /healthz
