@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nocodb-ingress
+  namespace: nocodb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+    
+    # nocodb.app.mmh-global.com
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/924f968f-9d5f-4d2b-9726-26bc0c80a17d
+    
+    # document.dev-app.mmh-global.com
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:806342426990:certificate/8cb2a1cc-b4ed-4645-9be4-2f9146e481e0
+
+spec:
+  ingressClassName: alb
+
+  rules:
+  - host: document.dev-app.mmh-global.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nocodb-svc
+            port:
+              number: 8080
