@@ -1171,56 +1171,10 @@ base_cloudwatch_addon = aws.eks.Addon(f"{project_name}-cloudwatch-observability-
     addon_version=eks_cloudwatch_observability_version,
     service_account_role_arn=cloudwatch_observability_irsa_role.arn,
     resolve_conflicts_on_create="OVERWRITE",
+    resolve_conflicts_on_update="PRESERVE",
     opts=pulumi.ResourceOptions(depends_on=[cloudwatch_observability_irsa_role])
 )
 
-# # 5. Prepare the configuration that the agent needs.
-# #    This is a valid OpenTelemetry configuration that will resolve the 'liveness probe'
-# #    and 'CrashLoopBackOff' errors.
-# cloudwatch_agent_config = pulumi.Output.all(
-#     region=aws.get_region().region
-# ).apply(lambda args: json.dumps({
-#     "receivers": {
-#         "otlp": {
-#             "protocols": {
-#                 "grpc": {"endpoint": "0.0.0.0:4317"},
-#                 "http": {"endpoint": "0.0.0.0:4318"}
-#             }
-#         }
-#     },
-#     "exporters": { "awsemf": { "region": args["region"] } },
-#     "service": {
-#         "pipelines": {
-#             "metrics": {
-#                 "receivers": ["otlp"],
-#                 "exporters": ["awsemf"]
-#             }
-#         }
-#     }
-# }))
-
-# # 6. Define and apply the AmazonCloudWatchAgent Custom Resource.
-# #    This tells the addon operator (installed in step 4) how to configure the agent.
-# #    This is the official, Kubernetes-native way to configure an operator.
-# cloudwatch_agent_cr = k8s.apiextensions.CustomResource("amazon-cloudwatch-agent-cr",
-#     api_version="cloudwatch.aws.amazon.com/v1alpha1",
-#     kind="AmazonCloudWatchAgent",
-#     metadata={
-#         "name": "amazon-cloudwatch-agent", # This name must match the default
-#         "namespace": cloudwatch_namespace.metadata["name"],
-#     },
-#     spec={
-#         "mode": "daemonset",
-#         # The addon creates the SA; we just provide the config.
-#         # The operator will find the default `cloudwatch-agent` SA.
-#         "config": cloudwatch_agent_config
-#     },
-#     opts=pulumi.ResourceOptions(
-#         provider=k8s_provider,
-#         # This CR can only be created after the addon has installed the CRD.
-#         depends_on=[base_cloudwatch_addon, cloudwatch_namespace]
-#     )
-# )
 
 
 
