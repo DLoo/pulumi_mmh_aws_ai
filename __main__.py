@@ -11,7 +11,8 @@ import json
 import requests
 
 config = pulumi.Config()
-project_name = config.require("project_name") + "-" + pulumi.get_stack()
+stack_name = pulumi.get_stack()
+project_name = config.require("project_name") + "-" + stack_name
 aws_region = aws.get_region().region
 eks_cluster_name = config.get("eks_cluster_name") or f"{project_name}-cluster"
 existing_vpc_id = config.require("existing_vpc_id")
@@ -334,51 +335,51 @@ second_node_group = eks.ManagedNodeGroup(f"{project_name}-{second_ng_instance_ty
     )
 )
 
-
+if stack_name == "dev":
 # ==============================================================================
 # --- NEW: GPU Enabled Managed Node Group ---
 # ==============================================================================
-gpu_node_group = eks.ManagedNodeGroup(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng",
-    cluster=eks_cluster,
-    node_group_name=f"{project_name}-{gpu_ng_instance_type_sanitized}-nodes",
-    node_role=eks_node_instance_role,
-    
-    ami_type="AL2023_x86_64_NVIDIA",
-    
-    # Associate the GPU launch template.
-    launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
-        id=gpu_ng_launch_template.id,
-        version=gpu_ng_launch_template.latest_version
-    ),
-    
-    # Using the same scaling config as other nodes for simplicity.
-    # You could create a separate config block for GPU scaling if needed.
-    scaling_config=aws.eks.NodeGroupScalingConfigArgs(
-        desired_size=node_config["desired_count"],
-        min_size=node_config["min_count"],
-        max_size=node_config["max_count"],
-    ),
-    
-    subnet_ids=existing_private_subnet_ids,
-    labels={
-        "workload-type": "gpu",
-        "instance-type": gpu_ng_instance_type_sanitized,
-        "nvidia.com/gpu": "true" # Common label for identifying GPU nodes
-    },
-    
-    # BEST PRACTICE: Taint GPU nodes to prevent non-GPU workloads from being scheduled on them.
-    # Pods must have a corresponding "toleration" to be scheduled on these nodes.
-    taints=[aws.eks.NodeGroupTaintArgs(
-        key="nvidia.com/gpu",
-        value="true",
-        effect="NO_SCHEDULE",
-    )],
-    
-    tags=create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng"),
-    opts=pulumi.ResourceOptions(
-        depends_on=[eks_cluster]
+    gpu_node_group = eks.ManagedNodeGroup(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng",
+        cluster=eks_cluster,
+        node_group_name=f"{project_name}-{gpu_ng_instance_type_sanitized}-nodes",
+        node_role=eks_node_instance_role,
+        
+        ami_type="AL2023_x86_64_NVIDIA",
+        
+        # Associate the GPU launch template.
+        launch_template=aws.eks.NodeGroupLaunchTemplateArgs(
+            id=gpu_ng_launch_template.id,
+            version=gpu_ng_launch_template.latest_version
+        ),
+        
+        # Using the same scaling config as other nodes for simplicity.
+        # You could create a separate config block for GPU scaling if needed.
+        scaling_config=aws.eks.NodeGroupScalingConfigArgs(
+            desired_size=node_config["desired_count"],
+            min_size=node_config["min_count"],
+            max_size=node_config["max_count"],
+        ),
+        
+        subnet_ids=existing_private_subnet_ids,
+        labels={
+            "workload-type": "gpu",
+            "instance-type": gpu_ng_instance_type_sanitized,
+            "nvidia.com/gpu": "true" # Common label for identifying GPU nodes
+        },
+        
+        # BEST PRACTICE: Taint GPU nodes to prevent non-GPU workloads from being scheduled on them.
+        # Pods must have a corresponding "toleration" to be scheduled on these nodes.
+        taints=[aws.eks.NodeGroupTaintArgs(
+            key="nvidia.com/gpu",
+            value="true",
+            effect="NO_SCHEDULE",
+        )],
+        
+        tags=create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng"),
+        opts=pulumi.ResourceOptions(
+            depends_on=[eks_cluster]
+        )
     )
-)
 
 
 # ==============================================================================
@@ -389,14 +390,14 @@ gpu_node_group = eks.ManagedNodeGroup(f"{project_name}-{gpu_ng_instance_type_san
 # It must be installed for GPU workloads to function correctly.
 # https://docs.aws.amazon.com/eks/latest/userguide/create-managed-node-group.html
     # kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml
-nvidia_device_plugin = k8s.yaml.ConfigFile("nvidia-device-plugin",
-    file="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml",
-    opts=pulumi.ResourceOptions(
-        provider=k8s_provider,
-        # Ensure GPU nodes are ready before applying the plugin.
-        depends_on=[gpu_node_group]
+    nvidia_device_plugin = k8s.yaml.ConfigFile("nvidia-device-plugin",
+        file="https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.3/deployments/static/nvidia-device-plugin.yml",
+        opts=pulumi.ResourceOptions(
+            provider=k8s_provider,
+            # Ensure GPU nodes are ready before applying the plugin.
+            depends_on=[gpu_node_group]
+        )
     )
-)
 
 
 
@@ -1115,20 +1116,24 @@ efs_storage_class = k8s.storage.v1.StorageClass("efs-sc",
 
 
 
+
+
 # ==============================================================================
-# --- AMAZON CLOUDWATCH OBSERVABILITY ADD-ON ---
+# --- AMAZON CLOUDWATCH OBSERVABILITY ADD-ON (Corrected for API Schema) ---
 # ==============================================================================
 
-# 1. Define the service account name and namespace the addon will use.
-cloudwatch_sa_name = "cloudwatch-agent"
-# The addon creates its own namespace, 'amazon-cloudwatch'
-cloudwatch_sa_namespace = "amazon-cloudwatch"
+# 1. Define and create the namespace for the CloudWatch components explicitly.
+cloudwatch_namespace = k8s.core.v1.Namespace("amazon-cloudwatch-ns",
+    metadata={"name": "amazon-cloudwatch"},
+    opts=pulumi.ResourceOptions(provider=k8s_provider)
+)
 
-# 2. Create the IAM role for the CloudWatch agent service account.
+# 2. Create the IAM Role for the CloudWatch and Fluent-bit service accounts.
 cloudwatch_observability_irsa_role = aws.iam.Role(f"{project_name}-cloudwatch-observability-irsa-role",
     assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.oidc_provider_arn,
-        oidc_provider_url=eks_cluster.oidc_provider_url
+        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+        oidc_provider_url=eks_cluster.core.oidc_provider.url,
+        ns_name=cloudwatch_namespace.metadata["name"]
     ).apply(
         lambda args: json.dumps({
             "Version": "2012-10-17",
@@ -1138,40 +1143,92 @@ cloudwatch_observability_irsa_role = aws.iam.Role(f"{project_name}-cloudwatch-ob
                 "Action": "sts:AssumeRoleWithWebIdentity",
                 "Condition": {
                     "StringEquals": {
-                        # Condition to only allow the specific service account to assume the role
-                        f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{cloudwatch_sa_namespace}:{cloudwatch_sa_name}"
+                        f"{args['oidc_provider_url'].replace('https://', '')}:sub": [
+                            f"system:serviceaccount:{args['ns_name']}:cloudwatch-agent",
+                            f"system:serviceaccount:{args['ns_name']}:fluent-bit"
+                        ]
                     }
                 }
             }]
         })
     ),
     tags=create_common_tags("cloudwatch-observability-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
+    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
 )
 
-# 3. Attach the necessary AWS managed policy to the role.
-# This policy grants permissions to send metrics and logs to CloudWatch.
+# 3. Attach the CloudWatchAgentServerPolicy to the role.
 aws.iam.RolePolicyAttachment(f"{project_name}-cloudwatch-observability-policy-attachment",
     role=cloudwatch_observability_irsa_role.name,
     policy_arn="arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 )
 
-# 4. Install the 'amazon-cloudwatch-observability' EKS addon.
-cloudwatch_observability_addon = eks.Addon(f"{project_name}-cloudwatch-observability-addon",
-    cluster=eks_cluster,
+# 4. Install the BASE EKS Addon.
+#    We provide the role ARN so the addon creates and annotates the service accounts.
+#    We provide NO configuration_values, as the API does not support it.
+base_cloudwatch_addon = aws.eks.Addon(f"{project_name}-cloudwatch-observability-base-addon",
+    cluster_name=eks_cluster.eks_cluster.name,
     addon_name="amazon-cloudwatch-observability",
     addon_version=eks_cloudwatch_observability_version,
-    # Associate the IAM role with the addon's service account.
     service_account_role_arn=cloudwatch_observability_irsa_role.arn,
-    opts=pulumi.ResourceOptions(
-        provider=k8s_provider,
-        # Ensure the role and its policy attachment are created before the addon is installed.
-        depends_on=[
-            eks_cluster,
-            cloudwatch_observability_irsa_role
-        ]
-    )
+    resolve_conflicts_on_create="OVERWRITE",
+    opts=pulumi.ResourceOptions(depends_on=[cloudwatch_observability_irsa_role])
 )
+
+# # 5. Prepare the configuration that the agent needs.
+# #    This is a valid OpenTelemetry configuration that will resolve the 'liveness probe'
+# #    and 'CrashLoopBackOff' errors.
+# cloudwatch_agent_config = pulumi.Output.all(
+#     region=aws.get_region().region
+# ).apply(lambda args: json.dumps({
+#     "receivers": {
+#         "otlp": {
+#             "protocols": {
+#                 "grpc": {"endpoint": "0.0.0.0:4317"},
+#                 "http": {"endpoint": "0.0.0.0:4318"}
+#             }
+#         }
+#     },
+#     "exporters": { "awsemf": { "region": args["region"] } },
+#     "service": {
+#         "pipelines": {
+#             "metrics": {
+#                 "receivers": ["otlp"],
+#                 "exporters": ["awsemf"]
+#             }
+#         }
+#     }
+# }))
+
+# # 6. Define and apply the AmazonCloudWatchAgent Custom Resource.
+# #    This tells the addon operator (installed in step 4) how to configure the agent.
+# #    This is the official, Kubernetes-native way to configure an operator.
+# cloudwatch_agent_cr = k8s.apiextensions.CustomResource("amazon-cloudwatch-agent-cr",
+#     api_version="cloudwatch.aws.amazon.com/v1alpha1",
+#     kind="AmazonCloudWatchAgent",
+#     metadata={
+#         "name": "amazon-cloudwatch-agent", # This name must match the default
+#         "namespace": cloudwatch_namespace.metadata["name"],
+#     },
+#     spec={
+#         "mode": "daemonset",
+#         # The addon creates the SA; we just provide the config.
+#         # The operator will find the default `cloudwatch-agent` SA.
+#         "config": cloudwatch_agent_config
+#     },
+#     opts=pulumi.ResourceOptions(
+#         provider=k8s_provider,
+#         # This CR can only be created after the addon has installed the CRD.
+#         depends_on=[base_cloudwatch_addon, cloudwatch_namespace]
+#     )
+# )
+
+
+
+
+
+
+
+
 
 
 
@@ -1330,7 +1387,7 @@ cluster_autoscaler_chart = Chart(cas_sa_name,
             cluster_autoscaler_irsa_role,
             primary_node_group,
             second_node_group,
-            gpu_node_group,
+            # gpu_node_group,
             aws_load_balancer_controller_chart
         ]
     )
