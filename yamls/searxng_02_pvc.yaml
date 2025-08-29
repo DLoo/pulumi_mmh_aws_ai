@@ -1,0 +1,26 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: searxng-ebs-pvc
+  namespace: searxng
+spec:
+  storageClassName: ebs-retain-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: searxng-fs-pvc
+#   namespace: searxng
+# spec:
+#   storageClassName: efs-retain-sc
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 10Gi

@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: searxng-config
+  namespace: searxng
+data:
+  settings.yml: |
+    use_default_settings: true
+    server:
+      port: 8080
+      bind_address: "0.0.0.0"
+      # --- FIX #1: THIS IS MANDATORY. You must uncomment this. ---
+      # This tells Searxng to trust the Ingress and Service proxies.
+      use_proxy_headers: true
+      # --- FIX #2: Add the base URL for your Ingress. ---
+      # Replace with your actual domain.
+      base_url: "https://searxng.dev-app.mmh-global.com"
+      public_instance: false
+      limiter: false
+      secret_key: "c8e9b00387ca639101b6080d9dd2c204516e18d0b749af548a18ea35f4253683"
+    search:
+      safe_search: 0
+      formats:
+        - html
+        - json
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng-deployment
+  namespace: searxng
+  labels:
+    app: searxng
+spec:
+  replicas: 1 # You can scale this number based on your load
+  selector:
+    matchLabels:
+      app: searxng
+  template:
+    metadata:
+      labels:
+        app: searxng
+    spec:
+      containers:
+        - name: searxng
+          # Using the official image from DockerHub.
+          image: docker.io/searxng/searxng:latest
+          env:
+            - name: FORCE_OWNERSHIP
+              value: "false"
+          # Environment variables can be set here if needed, for example:
+          # env:
+          #  - name: SEARXNG_BASE_URL
+          #    value: "https://searxng.example.com/"
+          ports:
+            - name: http
+              containerPort: 8080 # This is the port Searxng listens on inside the container
+              protocol: TCP
+          volumeMounts:
+            # Mount the settings.yml from the ConfigMap into the container.
+            - name: config-volume
+              mountPath: /etc/searxng
+              # subPath: settings.yml
+            # Mount the persistent volume for cached data.
+            - name: data-volume
+              mountPath: /var/cache/searxng
+          resources:
+            requests:
+              cpu: 250m
+              memory: 250Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+      volumes:
+        # Define the volume based on the ConfigMap.
+        - name: config-volume
+          configMap:
+            name: searxng-config
+        # Define the volume using the PersistentVolumeClaim.
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: searxng-ebs-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng-svc
+  namespace: searxng
+spec:
+  # To expose Searxng externally via an AWS Network Load Balancer,
+  # change 'ClusterIP' to 'LoadBalancer'.
+  type: ClusterIP
+  selector:
+    # This selector ensures the service routes traffic to pods with the 'app: searxng' label.
+    app: searxng
+  ports:
+    - name: http
+      protocol: TCP
+      # The port the service will be available on.
+      port: 8080
+      # The port on the container that the service will forward traffic to.
+      targetPort: 8080

@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: searxng-ingress
+  namespace: searxng
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # This defines the type of traffic the ALB will listen for
+    alb.ingress.kubernetes.io/target-type: ip
+    # n8n.dev-app.mmh-global.com
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:806342426990:certificate/6f1f1f86-a8c4-4647-99b1-fb0e8e5081e7
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+
+spec:
+  ingressClassName: alb
+#  tls:
+#  - hosts:
+#    - www.k8s.mmh
+#    secretName: k8s-mmh-tls
+  rules:
+  - host: searxng.dev-app.mmh-global.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: searxng-svc
+            port:
+              number: 8080
