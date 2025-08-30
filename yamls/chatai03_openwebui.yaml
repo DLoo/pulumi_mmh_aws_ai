@@ -50,7 +50,9 @@ spec:
 
       containers:
         - name: open-webui
-          image: ghcr.io/open-webui/open-webui:main # A simple image that shows hostname
+          image: dyrnq/open-webui:v0.5.18  # v0.5.11
+
+          # image: ghcr.io/open-webui/open-webui:main # A simple image that shows hostname
           command: ["/bin/sh", "-c"]
           args:
             - |

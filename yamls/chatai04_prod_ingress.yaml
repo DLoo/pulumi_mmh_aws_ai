@@ -32,9 +32,9 @@ metadata:
     # chatai.app.musimmas.com
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/51abcc7a-d9a3-4da7-86f8-8c48cd06d041
     
-
-    alb.ingress.kubernetes.io/proxy-read-timeout: "33600"
-    alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=600
+    # alb.ingress.kubernetes.io/proxy-read-timeout: "33600"
+    # alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
     # alb.ingress.kubernetes.io/rewrite-target: /
 
 spec:

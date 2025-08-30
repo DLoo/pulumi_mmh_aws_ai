@@ -34,9 +34,10 @@ metadata:
     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:806342426990:certificate/b5115dae-f291-42f2-b788-200601200add
 
     # cert-manager.io/disable-self-check: "true"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=600
 
-    alb.ingress.kubernetes.io/proxy-read-timeout: "33600"
-    alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
+    # alb.ingress.kubernetes.io/proxy-read-timeout: "33600"
+    # alb.ingress.kubernetes.io/proxy-send-timeout: "33600"
     # alb.ingress.kubernetes.io/rewrite-target: /
 
 spec:
