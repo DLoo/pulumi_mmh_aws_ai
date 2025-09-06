@@ -100,8 +100,6 @@ vpc = aws.ec2.get_vpc(id=existing_vpc_id)
 
 
 
-
-
 # --- IAM Roles ---
 eks_service_role = aws.iam.Role(f"{project_name}-eks-service-role",
     assume_role_policy=json.dumps({
@@ -165,6 +163,10 @@ for i, policy_arn in enumerate(managed_node_policy_arns):
 primary_instance_type = node_config["instance_types"][0] if node_config["instance_types"] else "t3.medium"
 
 
+if stack_name == 'prod':
+    existing_public_subnet_ids = None
+
+
 eks_cluster = eks.Cluster(f"{project_name}-eks",
     name=eks_cluster_name,
     service_role=eks_service_role,
@@ -172,6 +174,9 @@ eks_cluster = eks.Cluster(f"{project_name}-eks",
     vpc_id=vpc.id,
     public_subnet_ids=existing_public_subnet_ids,
     private_subnet_ids=existing_private_subnet_ids,
+    # endpoint_private_access=True, # Allow access from within the VPC (default if only private subnets)
+    # endpoint_public_access=False, # Explicitly disable public access
+
     create_oidc_provider=True,
     version=eks_cluster_version,
     enabled_cluster_log_types=["api", "audit", "authenticator", "controllerManager", "scheduler"],
