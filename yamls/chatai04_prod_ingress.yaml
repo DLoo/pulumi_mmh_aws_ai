@@ -23,9 +23,9 @@ metadata:
     # cert-manager.io/cluster-issuer: letsencrypt-staging
     # For production, you'll change it to:
     # cert-manager.io/cluster-issuer: letsencrypt-prod
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # Ensure ALB listens on 443
-    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
-    # alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
     
     # chatai.app.mmh-global.com
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/863439db-c6a1-4231-b8ac-0af6ad671384
@@ -48,10 +48,10 @@ spec:
   rules:
     # - host: k8s-chatai-openwebu-dfd767cdbf-1006398550.ap-southeast-1.elb.amazonaws.com
     # - host: chatai.app.mmh-global.com # The hostname for the Ingress
-    # - host: chatai.app.mmh-global.com # The hostname for the Ingress
+    - host: chatai.mmh-global.com # The hostname for the Ingress
     # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    - http:
-      # http:
+    # - http:
+      http:
         paths:
           - path: /
             pathType: Prefix
@@ -61,16 +61,16 @@ spec:
                 port:
                   number: 80
 
+    - host: chatai.musimmas.com # The hostname for the Ingress
     # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    # # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    # # - http:
-    #   http:
-    #     paths:
-    #       - path: /
-    #         pathType: Prefix
-    #         backend:
-    #           service:
-    #             name: open-webui-svc
-    #             port:
-    #               number: 80
+    # - http:
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui-svc
+                port:
+                  number: 80
          
