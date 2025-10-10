@@ -5,7 +5,7 @@ metadata:
   name: searxng-ebs-pvc
   namespace: searxng
 spec:
-  storageClassName: ebs-retain-sc
+  storageClassName: ebs-retain-sc-encrypted
   accessModes:
     - ReadWriteOnce
   resources:
