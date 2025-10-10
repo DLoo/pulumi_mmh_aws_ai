@@ -14,7 +14,7 @@ data:
       use_proxy_headers: true
       # --- FIX #2: Add the base URL for your Ingress. ---
       # Replace with your actual domain.
-      base_url: "https://searxng.dev-app.mmh-global.com"
+      base_url: "https://searxng.mmh-global.com"
       public_instance: false
       limiter: false
       secret_key: "c8e9b00387ca639101b6080d9dd2c204516e18d0b749af548a18ea35f4253683"
@@ -23,6 +23,12 @@ data:
       formats:
         - html
         - json
+    engines:
+      - name: duckduckgo
+      - name: google
+      - name: bing
+      - name: qwant
+      - name: wikipedia
 
 ---
 apiVersion: apps/v1
@@ -42,13 +48,16 @@ spec:
       labels:
         app: searxng
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: searxng
           # Using the official image from DockerHub.
           image: docker.io/searxng/searxng:latest
-          env:
-            - name: FORCE_OWNERSHIP
-              value: "false"
+          # The FORCE_OWNERSHIP env is no longer needed with securityContext.
+          # env:
+          #   - name: FORCE_OWNERSHIP
+          #     value: "false"
           # Environment variables can be set here if needed, for example:
           # env:
           #  - name: SEARXNG_BASE_URL
@@ -60,9 +69,8 @@ spec:
           volumeMounts:
             # Mount the settings.yml from the ConfigMap into the container.
             - name: config-volume
-              mountPath: /etc/searxng
-              # subPath: settings.yml
-            # Mount the persistent volume for cached data.
+              mountPath: /etc/searxng/settings.yml
+              subPath: settings.yml
             - name: data-volume
               mountPath: /var/cache/searxng
           resources:

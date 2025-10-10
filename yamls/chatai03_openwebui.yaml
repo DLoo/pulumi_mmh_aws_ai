@@ -72,7 +72,7 @@ spec:
             - name: WEBUI_SECRET_KEY
               value: "FhYLFE6NKta80GaJcgeswcrHeZnpi2nDw7+rsd8ElJs="
             - name: WEBUI_URL
-              value: "http://chatai.app.mmh-global.com" # This is the path we defined in the Ingress
+              value: "http://chatai.mmh-global.com" # This is the path we defined in the Ingress
             # - name: DATABASE_URL
             #   value: "postgresql://$(PG_USER):$(PG_PASSWORD)@postgres-0.postgres-svc.chatai.svc.cluster.local:5432/$(PG_DB)"
             - name: PG_USER
