@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: redis
+  labels:
+    app: redis
+data:
+  redis.conf: |
+    # Set a password for Redis
+    # requirepass your-strong-password
+
+    # Set the maximum memory to 256mb
+    maxmemory 512mb
+
+    # Use the allkeys-lru eviction policy when memory is full
+    maxmemory-policy allkeys-lru

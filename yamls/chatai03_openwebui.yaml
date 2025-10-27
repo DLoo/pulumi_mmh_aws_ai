@@ -9,7 +9,7 @@ metadata:
   name: open-webui
   namespace: chatai
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: open-webui
@@ -50,7 +50,7 @@ spec:
 
       containers:
         - name: open-webui
-          image: dyrnq/open-webui:v0.5.18  # v0.5.11
+          image: dyrnq/open-webui:v0.6.1 # v0.6.3 v0.5.18 v0.5.11
 
           # image: ghcr.io/open-webui/open-webui:main # A simple image that shows hostname
           command: ["/bin/sh", "-c"]
@@ -92,6 +92,16 @@ spec:
                   key: POSTGRES_DB
             - name: WEBUI_NAME
               value: "MMH AI"
+
+            - name: ENABLE_WEBSOCKET_SUPPORT
+              value: "true"
+            - name: WEBSOCKET_MANAGER
+              value: "redis"
+            - name: WEBSOCKET_REDIS_URL
+              value: "redis://redis-svc.redis.svc.cluster.local:6379/1"
+            - name: REDIS_KEY_PREFIX
+              value: "open-webui"
+
             - name: WEBUI_BANNERS
               value: "[{\"id\": \"1\", \"type\": \"warning\", \"title\": \"Employee Guidance.\", \"content\": \"For work use only. Do not input confidential data. Verify all AI output for accuracy before use.\", \"dismissible\": true, \"timestamp\": 1000}]"
             # - name: ENABLE_CODE_EXECUTION
@@ -124,8 +134,8 @@ spec:
               cpu: 250m
               memory: 1Gi
             limits:
-              cpu: 1500m
-              memory: 4Gi
+              cpu: 2500m
+              memory: 8Gi
           livenessProbe:
             httpGet:
               path: /health

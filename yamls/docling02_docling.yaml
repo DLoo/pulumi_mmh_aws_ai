@@ -13,7 +13,7 @@ metadata:
 # 'spec' is where you define the desired state of the Deployment.
 spec:
   # The number of pod replicas to maintain.
-  replicas: 1
+  replicas: 3
   # 'selector' tells the Deployment which pods to manage. It must match the labels of the pod template.
   selector:
     matchLabels:
@@ -30,7 +30,7 @@ spec:
       - name: docling-container
         # The container image to pull and run.
         # gpu support image: quay.io/docling-project/docling-serve-cu124
-        image: quay.io/docling-project/docling-serve:latest
+        image: quay.io/docling-project/docling-serve:v0.16.1  # latest
         # 'ports' lists the network ports to expose from the container.
         ports:
         - containerPort: 5001
@@ -40,6 +40,8 @@ spec:
           value: "true"
         - name: DOCLING_SERVE_ENABLE_REMOTE_SERVICES
           value: "true"
+        - name: DOCLING_SERVE_MAX_SYNC_WAIT
+          value: "300"
         # --- OCR Configuration ---
         # Specify the languages for OCR processing.
         # Use 3-letter ISO 639-2/T codes. You can add more, separated by commas.
@@ -52,8 +54,19 @@ spec:
             memory: "1Gi"
             cpu: "500m"
           limits:
-            memory: "4Gi"
-            cpu: "2"
+            memory: "8Gi"
+            cpu: "2500m"
+        livenessProbe:
+          tcpSocket:
+            port: 5001
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /docs
+            port: 5001
+          initialDelaySeconds: 20
+          periodSeconds: 10
 
 ---
 # This section defines the Service. A '---' separator is used to include multiple Kubernetes objects in one file.

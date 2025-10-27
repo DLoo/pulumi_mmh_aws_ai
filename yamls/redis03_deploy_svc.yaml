@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: redis
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        # Using the official Redis image from Docker Hub
+        image: redis:8.2.2-alpine
+        command:
+          - redis-server
+          - "/etc/redis/redis.conf"
+        ports:
+        - containerPort: 6379
+        livenessProbe:
+          exec:
+            command:
+              - redis-cli
+              - ping
+          # Wait 15 seconds before the first probe
+          initialDelaySeconds: 15
+          # Probe every 20 seconds
+          periodSeconds: 20
+        # --- Readiness Probe ---
+        # Checks if the container is ready to accept traffic.
+        readinessProbe:
+          exec:
+            command:
+              - redis-cli
+              - ping
+          # Wait 5 seconds before the first probe
+          initialDelaySeconds: 5
+          # Probe every 10 seconds
+          periodSeconds: 10
+        resources:
+          requests:
+            # Request 100 millicores (0.1 of a CPU core)
+            cpu: "100m"
+            # Request 128 MiB of memory
+            memory: "128Mi"
+          limits:
+            # Limit to 200 millicores (0.2 of a CPU core)
+            cpu: "300m"
+            # Limit to 256 MiB of memory (matches maxmemory in ConfigMap)
+            memory: "512Mi"
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+          items:
+          - key: redis.conf
+            path: redis.conf
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-svc
+  namespace: redis
+  labels:
+    app: redis
+spec:
+  # This makes the service only accessible within the cluster
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
