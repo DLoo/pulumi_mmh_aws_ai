@@ -1,0 +1,90 @@
+# mcpo-complete.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcpo-config
+  namespace: ai-mcp
+data:
+  mcpo.json: |
+    {
+      "mcpServers": {
+        "time": {
+          "command": "uvx",
+          "args": ["mcp-server-time"]
+        },
+        "fetch": {
+          "command": "uvx",
+          "args": ["mcp-server-fetch"]
+        },
+        "weather": {
+            "type": "streamable-http",
+            "url": "http://weatherapi-svc.ai-mcp.svc.cluster.local:8000/mcp"
+        }
+      }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpo-deploy
+  namespace: ai-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcpo
+  template:
+    metadata:
+      labels:
+        app: mcpo
+    spec:
+      containers:
+      - name: mcpo
+        image: ghcr.io/open-webui/mcpo:main
+        ports:
+        - containerPort: 8000
+        # command:
+        # - "uvx"
+        # - "mcp-server-time"
+        # - "--local-timezone=America/New_York"
+        command:
+          - "mcpo"
+          # - "serve"
+          - "--config"
+          - "/config/mcpo.json"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /config
+          readOnly: true
+        resources:
+          requests: {cpu: "500m", memory: "640Mi"}
+          limits: {cpu: "1000m", memory: "1280Mi"}
+        # livenessProbe:
+        #   tcpSocket:
+        #     port: 8000
+        #   initialDelaySeconds: 15
+        #   periodSeconds: 20
+        # readinessProbe:
+        #   tcpSocket:
+        #     port: 8000
+        #   initialDelaySeconds: 10
+        #   periodSeconds: 10
+      volumes:
+      - name: config-volume
+        configMap:
+          name: mcpo-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpo-svc
+  namespace: ai-mcp
+spec:
+  selector:
+    app: mcpo
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

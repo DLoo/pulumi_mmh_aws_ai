@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tika
+  namespace: tika
+  labels:
+    app: tika
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tika
+  template:
+    metadata:
+      labels:
+        app: tika
+    spec:
+      containers:
+      - name: tika
+        image: apache/tika:latest-full
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9998
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 9998
+          initialDelaySeconds: 20
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 9998
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tika-svc
+  namespace: tika
+  labels:
+    app: tika
+spec:
+  ports:
+  - port: 9998
+    targetPort: 9998
+    protocol: TCP
+  selector:
+    app: tika
+  type: ClusterIP
