@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: chatai-postgres-reader-secret
+  namespace: ai-mcp
+type: Opaque
+stringData:
+  # WEATHERAPI_API_KEY: "95ce06cc8a4e4e7fabb04929252310"
+  POSTGRES_MCP_HOST: "postgres-svc.chatai.svc.cluster.local"
+  POSTGRES_MCP_PORT: "5432"
+  POSTGRES_MCP_USER: "dbadmin"
+  POSTGRES_MCP_PASSWORD: "Done8212"
+  POSTGRES_MCP_DB: "openwebui"
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatai-postgres-reader-deploy
+  namespace: ai-mcp
+  labels:
+    app: chatai-postgres-reader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chatai-postgres-reader
+  template:
+    metadata:
+      labels:
+        app: chatai-postgres-reader
+    spec:
+      containers:
+      - name: chatai-postgres-reader
+        image: donaldloo/postgres-reader-mcp:v1.0 # Confirm this is your image name
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        # envFrom:
+        # - secretRef:
+        #     name: weatherapi-secret
+
+        # --- NEW: Resource Management ---
+        # This section ensures the pod doesn't use too many cluster resources.
+        resources:
+          requests:
+            # The minimum amount of resources guaranteed for the pod.
+            cpu: "100m"      # "m" stands for millicores. 100m is 1/10th of a CPU core.
+            memory: "64Mi"   # "Mi" stands for Mebibytes.
+          limits:
+            # The maximum amount of resources the pod is allowed to use.
+            cpu: "250m"      # If it exceeds this, it will be throttled.
+            memory: "128Mi"  # If it exceeds this, it will be terminated (OOMKilled).
+
+        # --- NEW: Health Checks ---
+        # Kubernetes uses these probes to check if your application is healthy.
+        livenessProbe:
+          # "Is the application alive?" If this probe fails, Kubernetes will restart the container.
+          httpGet:
+            path: /health  
+            port: 8000
+          initialDelaySeconds: 15 # Wait 15 seconds after container starts before first probe.
+          periodSeconds: 20       # Check every 20 seconds.
+          timeoutSeconds: 5         # Wait 5 seconds for a response.
+          failureThreshold: 3     # Restart after 3 consecutive failures.
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10 # Check readiness a bit sooner than liveness.
+          periodSeconds: 10       # Check more frequently to quickly add/remove from service.
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatai-postgres-reader-svc
+  namespace: ai-mcp
+spec:
+  selector:
+    # This selector links the Service to the Pods created by your Deployment
+    app: chatai-postgres-reader
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

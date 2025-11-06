@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-b-pvc
+  namespace: redis
+spec:
+  accessModes:
+    - ReadWriteOnce # Typical for block storage like EBS
+  storageClassName: ebs-retain-sc-encrypted # This MUST match the StorageClass you created
+  resources:
+    requests:
+      storage: 10Gi

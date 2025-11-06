@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-b-deploy
+  namespace: redis
+  labels:
+    app: redis-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-b
+  template:
+    metadata:
+      labels:
+        app: redis-b
+    spec:
+      containers:
+      - name: redis-valkey
+        image: docker.io/valkey/valkey:8.0.1-alpine
+        command:
+          - "valkey-server"
+          - "--save"
+          - "30"
+          - "1"
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        readinessProbe:
+          exec:
+            command:
+            - valkey-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+        livenessProbe:
+          exec:
+            command:
+            - valkey-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 5
+        resources:
+          requests:
+            # Request 100 millicores (0.1 of a CPU core)
+            cpu: "100m"
+            # Request 128 MiB of memory
+            memory: "128Mi"
+          limits:
+            # Limit to 200 millicores (0.2 of a CPU core)
+            cpu: "300m"
+            # Limit to 256 MiB of memory (matches maxmemory in ConfigMap)
+            memory: "512Mi"
+        securityContext:
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - SETGID
+            - SETUID
+            - DAC_OVERRIDE
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-b-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-b-svc
+  namespace: redis
+spec:
+  selector:
+    app: redis-b
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
