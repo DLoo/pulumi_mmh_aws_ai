@@ -1,31 +1,31 @@
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ebs-retain-sc # You can name it anything you like
-allowVolumeExpansion: true 
-provisioner: ebs.csi.aws.com 
-# provisioner: kubernetes.io/aws-ebs # For CSI driver
-parameters:
-  type: gp3 # Or gp2, io1, etc. based on your needs
-  fsType: ext4
-reclaimPolicy: Retain # <-- THIS IS THE IMPORTANT PART FOR DATA PROTECTION
-volumeBindingMode: WaitForFirstConsumer # Recommended for EBS
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: ebs-retain-sc # You can name it anything you like
+# allowVolumeExpansion: true 
+# provisioner: ebs.csi.aws.com 
+# # provisioner: kubernetes.io/aws-ebs # For CSI driver
+# parameters:
+#   type: gp3 # Or gp2, io1, etc. based on your needs
+#   fsType: ext4
+# reclaimPolicy: Retain # <-- THIS IS THE IMPORTANT PART FOR DATA PROTECTION
+# volumeBindingMode: WaitForFirstConsumer # Recommended for EBS
 
 ---
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: efs-retain-sc # You can name it anything you like
-allowVolumeExpansion: true 
-provisioner: efs.csi.aws.com # For CSI driver
-parameters:
-  directoryPerms: "700"
-  # fileSystemId: fs-0e67359b3ce9b0ea6
-  # fileSystemId: fs-0f94faea9f511e647
-  fileSystemId: fs-0bca53d8ab67e48dd
-  provisioningMode: efs-ap
-reclaimPolicy: Retain # <-- THIS IS THE IMPORTANT PART FOR DATA PROTECTION
-volumeBindingMode: WaitForFirstConsumer  # Recommended for EBS
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: efs-retain-sc # You can name it anything you like
+# allowVolumeExpansion: true 
+# provisioner: efs.csi.aws.com # For CSI driver
+# parameters:
+#   directoryPerms: "700"
+#   # fileSystemId: fs-0e67359b3ce9b0ea6
+#   # fileSystemId: fs-0f94faea9f511e647
+#   fileSystemId: fs-0bca53d8ab67e48dd
+#   provisioningMode: efs-ap
+# reclaimPolicy: Retain # <-- THIS IS THE IMPORTANT PART FOR DATA PROTECTION
+# volumeBindingMode: WaitForFirstConsumer  # Recommended for EBS
 
 ---
 apiVersion: storage.k8s.io/v1
@@ -55,7 +55,8 @@ parameters:
   encrypted: "true"
 
   # This specifies WHICH key to use
-  kmsKeyId: "arn:aws:kms:ap-southeast-1:353654036991:key/9703622d-f664-4f70-8e2c-8cbc0de203ba"
+  # kmsKeyId: "arn:aws:kms:ap-southeast-1:353654036991:key/9703622d-f664-4f70-8e2c-8cbc0de203ba"
+  kmsKeyId: "arn:aws:kms:ap-southeast-1:529236942211:key/4c57b098-5e4e-4d9c-a7cf-5884f2f232c9"
   
   # Your existing parameters
   type: gp3

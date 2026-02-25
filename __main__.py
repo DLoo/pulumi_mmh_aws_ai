@@ -1,3 +1,5 @@
+# __main__.py
+
 from typing import List, Optional, Dict, Any
 import pulumi
 from pulumi import Input, Output
@@ -27,11 +29,11 @@ eks_ebs_csi_driver_version = config.get("eks_ebs_csi_driver_version") or "v1.47.
 eks_efs_csi_driver_version = config.get("eks_efs_csi_driver_version") or " 3.1.9"
 eks_volume_snapshotter_version = config.get("eks_volume_snapshotter_version") or "4.1.0"
 eks_cert_manager_version = config.get("eks_cert_manager_version") or "v1.18.0"
-eks_velero_version = config.get("eks_velero_version") or "10.1.0"
+eks_velero_version = config.get("eks_velero_version") or "11.3.2"  # "10.1.0"
 eks_aws_load_balancer_controller_version = config.get("eks_aws_load_balancer_controller_version") or "1.13.4"
 # eks_cluster_autoscaler_version = config.get("eks_cluster_autoscaler_version") or "9.46.6" # Helm chart version for CAS
 # eks_velero_aws_plugin_version = config.require("eks_velero_aws_plugin_version")
-route53_hosted_zone_id = config.require("route53_hosted_zone_id")
+# route53_hosted_zone_id = config.require("route53_hosted_zone_id")
 external_dns_domains = config.require_object("external_dns_domains")
 eks_nodegroup_instance_types = config.get_object("eks_nodegroup_instance_types") or ["m5.large"]
 eks_gpu_nodegroup_instance_types = config.get_object("eks_gpu_nodegroup_instance_types") or ["g4dn.xlarge"]
@@ -45,7 +47,12 @@ eks_velero_protect = config.get_bool("eks_velero_protect") if config.get("eks_ve
 
 
 
-
+mandatory_scp_tags = {
+    "Env": "PRD",  # SCP requires "Env", not "Environment"
+    "Country": "SG",                             # Required by DenyEC2CreationSCP2
+    "Entity": "MMH",                             # Required by DenyEC2CreationSCP3
+    "map-migrated": "migYQI63UER32"                   # Required by DenyEC2CreationSCP4
+}
 
 
 
@@ -62,6 +69,7 @@ def create_common_tags(name: str, additional_tags: Optional[Dict[str, str]] = No
         "Environment": config.get("environment") or "development",
         "ManagedBy": "pulumi"
     }
+    tags.update(mandatory_scp_tags)
     if additional_tags:
         tags.update(additional_tags)
     return tags
@@ -174,8 +182,8 @@ eks_cluster = eks.Cluster(f"{project_name}-eks",
     vpc_id=vpc.id,
     public_subnet_ids=existing_public_subnet_ids,
     private_subnet_ids=existing_private_subnet_ids,
-    # endpoint_private_access=True, # Allow access from within the VPC (default if only private subnets)
-    # endpoint_public_access=False, # Explicitly disable public access
+    endpoint_private_access=True, # Allow access from within the VPC (default if only private subnets)
+    endpoint_public_access=False, # Explicitly disable public access
 
     create_oidc_provider=True,
     version=eks_cluster_version,
@@ -208,41 +216,43 @@ k8s_provider = k8s.Provider(f"{project_name}-k8s-provider", kubeconfig=kubeconfi
 
 
 # --- Launch Template for the Primary Node Group ---
+primary_lt_tags = create_common_tags("primary-ng-lt")
+
 primary_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-primary-ng-lt",
     name_prefix=f"{project_name}-primary-ng-lt-",
-    
-    # Define the instance type within the launch template
-    instance_type=node_config["instance_types"][0], # Assumes the first instance type in the list
-    
-    # Define the disk size within the launch template using block_device_mappings
+    instance_type=node_config["instance_types"][0],
     block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
-        device_name="/dev/xvda", # The root device name for Amazon Linux 2
+        device_name="/dev/xvda", 
         ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
-            volume_size=90,      # Set the desired disk size here
-            volume_type="gp3",   # It's good practice to specify gp3
+            volume_size=90,      
+            volume_type="gp3",   
             delete_on_termination=True,
         ),
     )],
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(enabled=True),
     
-    # Enable detailed monitoring
-    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
-        enabled=True,
-    ),
-    
-    tags=create_common_tags("primary-ng-lt")
+    # --- FIX: Explicitly tag Instances and Volumes to satisfy SCP ---
+    tag_specifications=[
+        aws.ec2.LaunchTemplateTagSpecificationArgs(
+            resource_type="instance",
+            tags=primary_lt_tags
+        ),
+        aws.ec2.LaunchTemplateTagSpecificationArgs(
+            resource_type="volume",
+            tags=primary_lt_tags
+        ),
+    ],
+    tags=primary_lt_tags # Tags the template resource itself
 )
 
 
-# --- Launch Template for the Second (m5.large) Node Group ---
+# --- Launch Template for the Second (m5.large / m6i) Node Group ---
 second_ng_instance_type = eks_nodegroup_instance_types[0].replace(".", "-")
+second_lt_tags = create_common_tags(f"{second_ng_instance_type}-ng-lt")
 
 second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{second_ng_instance_type}-ng-lt",
     name_prefix=f"{project_name}-{second_ng_instance_type}-ng-lt-",
-    
-    # Define this group's specific instance type
-    instance_type=eks_nodegroup_instance_types[0], # Assumes the first instance type in the list
-
-    # Define the disk size for this group as well
+    instance_type=eks_nodegroup_instance_types[0], 
     block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
         device_name="/dev/xvda",
         ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
@@ -251,42 +261,54 @@ second_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{second_ng_i
             delete_on_termination=True,
         ),
     )],
+    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(enabled=True),
     
-    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
-        enabled=True,
-    ),
-    
-    tags=create_common_tags(f"{second_ng_instance_type}-ng-lt")
-)
-
-# ==============================================================================
-# --- NEW: Launch Template for the GPU Node Group ---
-# ==============================================================================
-gpu_ng_instance_type = eks_gpu_nodegroup_instance_types[0]
-gpu_ng_instance_type_sanitized = gpu_ng_instance_type.replace(".", "-")
-
-gpu_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt",
-    name_prefix=f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt-",
-    
-    # Define this group's specific GPU instance type
-    instance_type=gpu_ng_instance_type,
-
-    # Define the disk size for the GPU group
-    block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
-        device_name="/dev/xvda",
-        ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
-            volume_size=250, # GPUs often benefit from slightly larger root volumes
-            volume_type="gp3",
-            delete_on_termination=True,
+    # --- FIX: Explicitly tag Instances and Volumes to satisfy SCP ---
+    tag_specifications=[
+        aws.ec2.LaunchTemplateTagSpecificationArgs(
+            resource_type="instance",
+            tags=second_lt_tags
         ),
-    )],
-    
-    monitoring=aws.ec2.LaunchTemplateMonitoringArgs(
-        enabled=True,
-    ),
-    
-    tags=create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng-lt")
+        aws.ec2.LaunchTemplateTagSpecificationArgs(
+            resource_type="volume",
+            tags=second_lt_tags
+        ),
+    ],
+    tags=second_lt_tags
 )
+
+    # --- Launch Template for the GPU Node Group ---
+if stack_name == "dev":
+    gpu_ng_instance_type = eks_gpu_nodegroup_instance_types[0]
+    gpu_ng_instance_type_sanitized = gpu_ng_instance_type.replace(".", "-")
+    gpu_lt_tags = create_common_tags(f"{gpu_ng_instance_type_sanitized}-ng-lt")
+
+    gpu_ng_launch_template = aws.ec2.LaunchTemplate(f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt",
+        name_prefix=f"{project_name}-{gpu_ng_instance_type_sanitized}-ng-lt-",
+        instance_type=gpu_ng_instance_type,
+        block_device_mappings=[aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
+            device_name="/dev/xvda",
+            ebs=aws.ec2.LaunchTemplateBlockDeviceMappingEbsArgs(
+                volume_size=250, 
+                volume_type="gp3",
+                delete_on_termination=True,
+            ),
+        )],
+        monitoring=aws.ec2.LaunchTemplateMonitoringArgs(enabled=True),
+        
+        # --- FIX: Explicitly tag Instances and Volumes to satisfy SCP ---
+        tag_specifications=[
+            aws.ec2.LaunchTemplateTagSpecificationArgs(
+                resource_type="instance",
+                tags=gpu_lt_tags
+            ),
+            aws.ec2.LaunchTemplateTagSpecificationArgs(
+                resource_type="volume",
+                tags=gpu_lt_tags
+            ),
+        ],
+        tags=gpu_lt_tags
+    )
 
 
 # 1. Update the primary node group to use its dedicated launch template.
@@ -416,132 +438,132 @@ if stack_name == "dev":
 # ==============================================================================
 # --- 4. CERT-MANAGER (Certificate Management) ---
 # ==============================================================================
+if stack_name != 'prod':
 
-cert_manager_namespace = k8s.core.v1.Namespace("cert-manager-ns",
-    metadata={
-        "name": "cert-manager",
-        "labels": {
-            # This label is for an older EKS Pod Identity system and is not required for IRSA.
-            # It's harmless to keep but can be removed.
-            "eks.amazonaws.com/pod-identity-webhook-enabled": "true"
-        }
-    },
-    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
+    cert_manager_namespace = k8s.core.v1.Namespace("cert-manager-ns",
+        metadata={
+            "name": "cert-manager",
+            "labels": {
+                # This label is for an older EKS Pod Identity system and is not required for IRSA.
+                # It's harmless to keep but can be removed.
+                "eks.amazonaws.com/pod-identity-webhook-enabled": "true"
+            }
+        },
+        opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[eks_cluster]))
 
 # --- IAM for Cert-Manager ---
+    cert_manager_sa_name = f"{project_name}-cert-manager"
+    cert_manager_role_name = f"{project_name}-cert-manager-irsa-role"
 
-cert_manager_sa_name = f"{project_name}-cert-manager"
-cert_manager_role_name = f"{project_name}-cert-manager-irsa-role"
+    # Manually construct the ARN to break the circular dependency for the permissions policy.
+    aws_account_id = eks_cluster.core.oidc_provider.arn.apply(lambda arn: arn.split(':')[4])
+    cert_manager_role_arn = pulumi.Output.concat("arn:aws:iam::", aws_account_id, ":role/", cert_manager_role_name)
 
-# Manually construct the ARN to break the circular dependency for the permissions policy.
-aws_account_id = eks_cluster.core.oidc_provider.arn.apply(lambda arn: arn.split(':')[4])
-cert_manager_role_arn = pulumi.Output.concat("arn:aws:iam::", aws_account_id, ":role/", cert_manager_role_name)
-
-# Define a single, consolidated permissions policy for cert-manager.
-cert_manager_iam_policy = aws.iam.Policy(f"{project_name}-cert-manager-policy",
-    name=f"{project_name}-CertManagerRoute53Policy",
-    policy=pulumi.Output.all(
-        hosted_zone_id=route53_hosted_zone_id,
-        role_arn=cert_manager_role_arn
-    ).apply(lambda args: json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [
-            # Standard Route53 permissions for DNS-01 challenge
-            {
-                "Effect": "Allow",
-                "Action": ["route53:GetChange"],
-                "Resource": "arn:aws:route53:::change/*"
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"],
-                "Resource": f"arn:aws:route53:::hostedzone/{args['hosted_zone_id']}"
-            },
-            # Permission to discover the correct delegated hosted zone
-            {
-                "Effect": "Allow",
-                "Action": ["route53:ListHostedZones", "route53:ListHostedZonesByName"],
-                "Resource": "*"
-            },
-            # THE FINAL FIX: Permissions for the solver to get role info and assume itself
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "iam:GetRole",
-                    "sts:AssumeRole"
-                ],
-                "Resource": args['role_arn']
-            }
-        ]
-    }))
-)
-
-# Create the IAM Role with the standard IRSA Trust Policy.
-cert_manager_irsa_role = aws.iam.Role(f"{project_name}-cert-manager-irsa-role",
-    name=cert_manager_role_name,
-    assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
-        oidc_provider_url=eks_cluster.core.oidc_provider.url
-    ).apply(
-        lambda args: json.dumps({
+    # Define a single, consolidated permissions policy for cert-manager.
+    cert_manager_iam_policy = aws.iam.Policy(f"{project_name}-cert-manager-policy",
+        name=f"{project_name}-CertManagerRoute53Policy",
+        policy=pulumi.Output.all(
+            hosted_zone_id=route53_hosted_zone_id,
+            role_arn=cert_manager_role_arn
+        ).apply(lambda args: json.dumps({
             "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Federated": args["oidc_provider_arn"]},
-                "Action": "sts:AssumeRoleWithWebIdentity",
-                "Condition": {
-                    "StringEquals": {
-                        f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:cert-manager:{cert_manager_sa_name}"
-                    }
+            "Statement": [
+                # Standard Route53 permissions for DNS-01 challenge
+                {
+                    "Effect": "Allow",
+                    "Action": ["route53:GetChange"],
+                    "Resource": "arn:aws:route53:::change/*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"],
+                    "Resource": f"arn:aws:route53:::hostedzone/{args['hosted_zone_id']}"
+                },
+                # Permission to discover the correct delegated hosted zone
+                {
+                    "Effect": "Allow",
+                    "Action": ["route53:ListHostedZones", "route53:ListHostedZonesByName"],
+                    "Resource": "*"
+                },
+                # THE FINAL FIX: Permissions for the solver to get role info and assume itself
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "iam:GetRole",
+                        "sts:AssumeRole"
+                    ],
+                    "Resource": args['role_arn']
                 }
-            }]
-        })
-    ),
-    tags=create_common_tags("cert-manager-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
-)
-
-# Attach the single, complete policy to the role.
-aws.iam.RolePolicyAttachment(f"{project_name}-cert-manager-irsa-policy-attachment",
-    role=cert_manager_irsa_role.name,
-    policy_arn=cert_manager_iam_policy.arn
-)
-
-# --- Helm Chart for cert-manager ---
-
-public_dns_resolvers = [
-    "8.8.8.8:53",
-    "8.8.4.4:53",
-    "1.1.1.1:53"
-]
-
-cert_manager_chart = Chart(cert_manager_sa_name,
-    ChartOpts(
-        chart="cert-manager",
-        version=eks_cert_manager_version,
-        fetch_opts=FetchOpts(repo="https://charts.jetstack.io"),
-        namespace=cert_manager_namespace.metadata["name"],
-        values={
-            "installCRDs": True,
-            "prometheus": {"enabled": False},
-            "serviceAccount": {
-                "create": True,
-                "name": cert_manager_sa_name,
-                "annotations": {
-                    "eks.amazonaws.com/role-arn": cert_manager_irsa_role.arn
-                }
-            },
-            "extraArgs": [
-                "--dns01-recursive-nameservers-only=true",
-                f"--dns01-recursive-nameservers={','.join(public_dns_resolvers)}"
             ]
-        }
-    ),
-    opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[
-        cert_manager_irsa_role,
-        cert_manager_iam_policy # Explicit dependency on the policy
-    ])
-)
+        }))
+    )
+
+    # Create the IAM Role with the standard IRSA Trust Policy.
+    cert_manager_irsa_role = aws.iam.Role(f"{project_name}-cert-manager-irsa-role",
+        name=cert_manager_role_name,
+        assume_role_policy=pulumi.Output.all(
+            oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+            oidc_provider_url=eks_cluster.core.oidc_provider.url
+        ).apply(
+            lambda args: json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"Federated": args["oidc_provider_arn"]},
+                    "Action": "sts:AssumeRoleWithWebIdentity",
+                    "Condition": {
+                        "StringEquals": {
+                            f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:cert-manager:{cert_manager_sa_name}"
+                        }
+                    }
+                }]
+            })
+        ),
+        tags=create_common_tags("cert-manager-irsa-role"),
+        opts=pulumi.ResourceOptions(depends_on=[eks_cluster])
+    )
+
+    # Attach the single, complete policy to the role.
+    aws.iam.RolePolicyAttachment(f"{project_name}-cert-manager-irsa-policy-attachment",
+        role=cert_manager_irsa_role.name,
+        policy_arn=cert_manager_iam_policy.arn
+    )
+
+    # --- Helm Chart for cert-manager ---
+
+    public_dns_resolvers = [
+        "8.8.8.8:53",
+        "8.8.4.4:53",
+        "1.1.1.1:53"
+    ]
+
+    cert_manager_chart = Chart(cert_manager_sa_name,
+        ChartOpts(
+            chart="cert-manager",
+            version=eks_cert_manager_version,
+            fetch_opts=FetchOpts(repo="https://charts.jetstack.io"),
+            namespace=cert_manager_namespace.metadata["name"],
+            values={
+                "installCRDs": True,
+                "prometheus": {"enabled": False},
+                "serviceAccount": {
+                    "create": True,
+                    "name": cert_manager_sa_name,
+                    "annotations": {
+                        "eks.amazonaws.com/role-arn": cert_manager_irsa_role.arn
+                    }
+                },
+                "extraArgs": [
+                    "--dns01-recursive-nameservers-only=true",
+                    f"--dns01-recursive-nameservers={','.join(public_dns_resolvers)}"
+                ]
+            }
+        ),
+        opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[
+            cert_manager_irsa_role,
+            cert_manager_iam_policy # Explicit dependency on the policy
+        ])
+    )
 
 
 
@@ -758,217 +780,217 @@ gp3_storage_class = k8s.storage.v1.StorageClass("gp3-storage-class",
 
 
 # 2. AWS Load Balancer Controller
+if stack_name != 'prod':
+    iam_policy_url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.2/docs/install/iam_policy.json" # Use the version matching your chart, or a recent one like v2.7.2
+    response = requests.get(iam_policy_url)
+    response.raise_for_status() # This will raise an error if the download fails
+    iam_policy_json = response.text
 
-iam_policy_url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.13.2/docs/install/iam_policy.json" # Use the version matching your chart, or a recent one like v2.7.2
-response = requests.get(iam_policy_url)
-response.raise_for_status() # This will raise an error if the download fails
-iam_policy_json = response.text
 
+    lbc_iam_policy = aws.iam.Policy(f"{project_name}-lbc-policy",
+        name=f"{project_name}-AWSLoadBalancerControllerIAMPolicy",
+        # policy=lbc_policy_document.json,
+        policy=iam_policy_json,
+        description="IAM policy for AWS Load Balancer Controller")
 
-lbc_iam_policy = aws.iam.Policy(f"{project_name}-lbc-policy",
-    name=f"{project_name}-AWSLoadBalancerControllerIAMPolicy",
-    # policy=lbc_policy_document.json,
-    policy=iam_policy_json,
-    description="IAM policy for AWS Load Balancer Controller")
-
-# Create a NEW, separate policy just for the ACM permissions.
-lbc_acm_policy = aws.iam.Policy(f"{project_name}-lbc-acm-policy",
-    name=f"{project_name}-LBC-ACMPermissions",
-    description="Permissions for LBC to import and manage ACM certificates for Ingress",
-    policy=json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "acm:ImportCertificate",      # <- Crucial for adding certs to ACM
-                    "acm:DeleteCertificate",      # <- Crucial for cleaning up certs from ACM
-                    "acm:DescribeCertificate",    # <- Allows checking if a cert exists
-                    "acm:ListCertificates",       # <- Allows listing certs
-                    "acm:GetCertificate",         # <- Allows retrieving cert details
-                    "acm:ListTagsForCertificate"  # <- Allows checking tags on certs
-                ],
-                "Resource": "*" # These actions generally require a wildcard resource
-            },
-            # The actions below are for a legacy method (IAM Server Certificates).
-            # They are often included for backward compatibility but are not strictly
-            # necessary for modern ALB+ACM integration. It's safe to include them.
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "iam:CreateServerCertificate",
-                    "iam:DeleteServerCertificate",
-                    "iam:GetServerCertificate",
-                    "iam:ListServerCertificates",
-                    "iam:UpdateServerCertificate",
-                    "iam:UploadServerCertificate"
-                ],
-                "Resource": "*"
-            }
-        ]
-    })
-)
-
-lbc_sa_name = "aws-load-balancer-controller"
-lbc_sa_namespace = "kube-system"
-
-lbc_irsa_role = aws.iam.Role(f"{project_name}-lbc-irsa-role",
-    assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.core.oidc_provider.arn, oidc_provider_url=eks_cluster.core.oidc_provider.url).apply(
-        lambda args: json.dumps({
+    # Create a NEW, separate policy just for the ACM permissions.
+    lbc_acm_policy = aws.iam.Policy(f"{project_name}-lbc-acm-policy",
+        name=f"{project_name}-LBC-ACMPermissions",
+        description="Permissions for LBC to import and manage ACM certificates for Ingress",
+        policy=json.dumps({
             "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Federated": args["oidc_provider_arn"]},
-                "Action": "sts:AssumeRoleWithWebIdentity",
-                "Condition": {
-                    "StringEquals": {f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{lbc_sa_namespace}:{lbc_sa_name}"}
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "acm:ImportCertificate",      # <- Crucial for adding certs to ACM
+                        "acm:DeleteCertificate",      # <- Crucial for cleaning up certs from ACM
+                        "acm:DescribeCertificate",    # <- Allows checking if a cert exists
+                        "acm:ListCertificates",       # <- Allows listing certs
+                        "acm:GetCertificate",         # <- Allows retrieving cert details
+                        "acm:ListTagsForCertificate"  # <- Allows checking tags on certs
+                    ],
+                    "Resource": "*" # These actions generally require a wildcard resource
+                },
+                # The actions below are for a legacy method (IAM Server Certificates).
+                # They are often included for backward compatibility but are not strictly
+                # necessary for modern ALB+ACM integration. It's safe to include them.
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "iam:CreateServerCertificate",
+                        "iam:DeleteServerCertificate",
+                        "iam:GetServerCertificate",
+                        "iam:ListServerCertificates",
+                        "iam:UpdateServerCertificate",
+                        "iam:UploadServerCertificate"
+                    ],
+                    "Resource": "*"
                 }
-            }]
+            ]
         })
-    ),
-    tags=create_common_tags("lbc-irsa-role"))
-
-aws.iam.RolePolicyAttachment(f"{project_name}-lbc-irsa-policy-attachment",
-    role=lbc_irsa_role.name,
-    policy_arn=lbc_iam_policy.arn,
-    opts=pulumi.ResourceOptions(depends_on=[lbc_irsa_role, lbc_iam_policy]))
-
-aws.iam.RolePolicyAttachment(f"{project_name}-lbc-irsa-acm-policy-attachment",
-    role=lbc_irsa_role.name, # Attaches to the SAME role
-    policy_arn=lbc_acm_policy.arn, # Attaches our NEW policy
-    opts=pulumi.ResourceOptions(depends_on=[lbc_irsa_role, lbc_acm_policy])
-)
-
-
-aws_load_balancer_controller_chart = Chart(f"{project_name}-lbc-chart",
-    ChartOpts(
-        chart="aws-load-balancer-controller",
-        version=eks_aws_load_balancer_controller_version,
-        fetch_opts=FetchOpts(repo="https://aws.github.io/eks-charts"),
-        namespace=lbc_sa_namespace,
-        values={
-            "clusterName": eks_cluster.eks_cluster.name,
-            "installCRDs": True,
-            "serviceAccount": {
-                "create": True,
-                "name": lbc_sa_name,
-                "annotations": {
-                    "eks.amazonaws.com/role-arn": lbc_irsa_role.arn
-                }
-            },
-            "region": aws_region,
-            "vpcId": vpc.id,
-            "rbac": {
-                "create": True,
-                # "extraRules": [
-                #     {
-                #         "apiGroups": [""],
-                #         "resources": ["secrets"],
-                #         "verbs": ["get", "list", "watch"],
-                #     }
-                # ]
-            },
-            "enableCertManager": True, 
-        }
-    ), opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[lbc_irsa_role, ebs_csi_driver_addon, cert_manager_chart]))
-
-
-
-
-
-# kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
-# kubectl apply -f aws-lbc-crds.yaml
-
-
-
-
-# 1. IAM Policy for ExternalDNS
-external_dns_policy_doc = aws.iam.get_policy_document_output(statements=[
-    aws.iam.GetPolicyDocumentStatementArgs(
-        effect="Allow",
-        actions=[
-            "route53:ChangeResourceRecordSets"
-        ],
-        resources=[f"arn:aws:route53:::hostedzone/{route53_hosted_zone_id}"] # Scopes permissions to your specific zone
-    ),
-    aws.iam.GetPolicyDocumentStatementArgs(
-        effect="Allow",
-        actions=[
-            "route53:ListHostedZones",
-            "route53:ListResourceRecordSets"
-        ],
-        resources=["*"] # These actions require a wildcard resource
     )
-])
 
-external_dns_iam_policy = aws.iam.Policy(f"{project_name}-external-dns-policy",
-    name=f"{project_name}-ExternalDNSRoute53Policy",
-    policy=external_dns_policy_doc.json
-)
+    lbc_sa_name = "aws-load-balancer-controller"
+    lbc_sa_namespace = "kube-system"
 
-# 2. IAM Role and Service Account for ExternalDNS
-external_dns_sa_name = "external-dns"
-# It's good practice to install cluster-wide tools in kube-system
-external_dns_sa_namespace = "kube-system"
-
-external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
-    assume_role_policy=pulumi.Output.all(
-        oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
-        oidc_provider_url=eks_cluster.core.oidc_provider.url
-    ).apply(
-        lambda args: json.dumps({
-            "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Federated": args["oidc_provider_arn"]},
-                "Action": "sts:AssumeRoleWithWebIdentity",
-                "Condition": {
-                    "StringEquals": {
-                        f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{external_dns_sa_namespace}:{external_dns_sa_name}"
+    lbc_irsa_role = aws.iam.Role(f"{project_name}-lbc-irsa-role",
+        assume_role_policy=pulumi.Output.all(oidc_provider_arn=eks_cluster.core.oidc_provider.arn, oidc_provider_url=eks_cluster.core.oidc_provider.url).apply(
+            lambda args: json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"Federated": args["oidc_provider_arn"]},
+                    "Action": "sts:AssumeRoleWithWebIdentity",
+                    "Condition": {
+                        "StringEquals": {f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{lbc_sa_namespace}:{lbc_sa_name}"}
                     }
-                }
-            }]
-        })
-    ),
-    tags=create_common_tags("external-dns-irsa-role"),
-    opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
-)
+                }]
+            })
+        ),
+        tags=create_common_tags("lbc-irsa-role"))
 
-aws.iam.RolePolicyAttachment(f"{project_name}-external-dns-irsa-policy-attachment",
-    role=external_dns_irsa_role.name,
-    policy_arn=external_dns_iam_policy.arn
-)
+    aws.iam.RolePolicyAttachment(f"{project_name}-lbc-irsa-policy-attachment",
+        role=lbc_irsa_role.name,
+        policy_arn=lbc_iam_policy.arn,
+        opts=pulumi.ResourceOptions(depends_on=[lbc_irsa_role, lbc_iam_policy]))
+
+    aws.iam.RolePolicyAttachment(f"{project_name}-lbc-irsa-acm-policy-attachment",
+        role=lbc_irsa_role.name, # Attaches to the SAME role
+        policy_arn=lbc_acm_policy.arn, # Attaches our NEW policy
+        opts=pulumi.ResourceOptions(depends_on=[lbc_irsa_role, lbc_acm_policy])
+    )
 
 
-# Get the existing kube-system namespace to avoid creation conflicts
-kube_system_ns = k8s.core.v1.Namespace.get("kube-system", "kube-system", opts=pulumi.ResourceOptions(provider=k8s_provider))
+    aws_load_balancer_controller_chart = Chart(f"{project_name}-lbc-chart",
+        ChartOpts(
+            chart="aws-load-balancer-controller",
+            version=eks_aws_load_balancer_controller_version,
+            fetch_opts=FetchOpts(repo="https://aws.github.io/eks-charts"),
+            namespace=lbc_sa_namespace,
+            values={
+                "clusterName": eks_cluster.eks_cluster.name,
+                "installCRDs": True,
+                "serviceAccount": {
+                    "create": True,
+                    "name": lbc_sa_name,
+                    "annotations": {
+                        "eks.amazonaws.com/role-arn": lbc_irsa_role.arn
+                    }
+                },
+                "region": aws_region,
+                "vpcId": vpc.id,
+                "rbac": {
+                    "create": True,
+                    # "extraRules": [
+                    #     {
+                    #         "apiGroups": [""],
+                    #         "resources": ["secrets"],
+                    #         "verbs": ["get", "list", "watch"],
+                    #     }
+                    # ]
+                },
+                "enableCertManager": True, 
+            }
+        ), opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[lbc_irsa_role, ebs_csi_driver_addon, cert_manager_chart]))
 
-# 3. Helm Chart for ExternalDNS
-external_dns_chart = Chart("external-dns",
-    ChartOpts(
-        chart="external-dns",
-        version="1.17.0", # Use a recent, stable version
-        fetch_opts=FetchOpts(repo="https://kubernetes-sigs.github.io/external-dns/"),
-        namespace=kube_system_ns.metadata["name"],
-        values={
-            "serviceAccount": {
-                "create": True,
-                "name": external_dns_sa_name,
-                "annotations": {
-                    "eks.amazonaws.com/role-arn": external_dns_irsa_role.arn
-                }
-            },
-            "provider": "aws",
-            "policy": "sync", # This ensures records are deleted when the Ingress is deleted
-            "aws": {
-                "region": aws_region
-            },
-            # IMPORTANT: This prevents ExternalDNS from touching domains it shouldn't
-            "domainFilters": external_dns_domains,
-            # IMPORTANT: This creates a TXT record to identify records managed by this instance
-            "txtOwnerId": route53_hosted_zone_id
-        }
-    ), opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[external_dns_irsa_role, aws_load_balancer_controller_chart]))
+
+
+
+
+    # kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
+    # kubectl apply -f aws-lbc-crds.yaml
+
+
+
+
+    # 1. IAM Policy for ExternalDNS
+    external_dns_policy_doc = aws.iam.get_policy_document_output(statements=[
+        aws.iam.GetPolicyDocumentStatementArgs(
+            effect="Allow",
+            actions=[
+                "route53:ChangeResourceRecordSets"
+            ],
+            resources=[f"arn:aws:route53:::hostedzone/{route53_hosted_zone_id}"] # Scopes permissions to your specific zone
+        ),
+        aws.iam.GetPolicyDocumentStatementArgs(
+            effect="Allow",
+            actions=[
+                "route53:ListHostedZones",
+                "route53:ListResourceRecordSets"
+            ],
+            resources=["*"] # These actions require a wildcard resource
+        )
+    ])
+
+    external_dns_iam_policy = aws.iam.Policy(f"{project_name}-external-dns-policy",
+        name=f"{project_name}-ExternalDNSRoute53Policy",
+        policy=external_dns_policy_doc.json
+    )
+
+    # 2. IAM Role and Service Account for ExternalDNS
+    external_dns_sa_name = "external-dns"
+    # It's good practice to install cluster-wide tools in kube-system
+    external_dns_sa_namespace = "kube-system"
+
+    external_dns_irsa_role = aws.iam.Role(f"{project_name}-external-dns-irsa-role",
+        assume_role_policy=pulumi.Output.all(
+            oidc_provider_arn=eks_cluster.core.oidc_provider.arn,
+            oidc_provider_url=eks_cluster.core.oidc_provider.url
+        ).apply(
+            lambda args: json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Principal": {"Federated": args["oidc_provider_arn"]},
+                    "Action": "sts:AssumeRoleWithWebIdentity",
+                    "Condition": {
+                        "StringEquals": {
+                            f"{args['oidc_provider_url'].replace('https://', '')}:sub": f"system:serviceaccount:{external_dns_sa_namespace}:{external_dns_sa_name}"
+                        }
+                    }
+                }]
+            })
+        ),
+        tags=create_common_tags("external-dns-irsa-role"),
+        opts=pulumi.ResourceOptions(depends_on=[eks_cluster.core.oidc_provider])
+    )
+
+    aws.iam.RolePolicyAttachment(f"{project_name}-external-dns-irsa-policy-attachment",
+        role=external_dns_irsa_role.name,
+        policy_arn=external_dns_iam_policy.arn
+    )
+
+
+    # Get the existing kube-system namespace to avoid creation conflicts
+    kube_system_ns = k8s.core.v1.Namespace.get("kube-system", "kube-system", opts=pulumi.ResourceOptions(provider=k8s_provider))
+
+    # 3. Helm Chart for ExternalDNS
+    external_dns_chart = Chart("external-dns",
+        ChartOpts(
+            chart="external-dns",
+            version="1.17.0", # Use a recent, stable version
+            fetch_opts=FetchOpts(repo="https://kubernetes-sigs.github.io/external-dns/"),
+            namespace=kube_system_ns.metadata["name"],
+            values={
+                "serviceAccount": {
+                    "create": True,
+                    "name": external_dns_sa_name,
+                    "annotations": {
+                        "eks.amazonaws.com/role-arn": external_dns_irsa_role.arn
+                    }
+                },
+                "provider": "aws",
+                "policy": "sync", # This ensures records are deleted when the Ingress is deleted
+                "aws": {
+                    "region": aws_region
+                },
+                # IMPORTANT: This prevents ExternalDNS from touching domains it shouldn't
+                "domainFilters": external_dns_domains,
+                # IMPORTANT: This creates a TXT record to identify records managed by this instance
+                "txtOwnerId": route53_hosted_zone_id
+            }
+        ), opts=pulumi.ResourceOptions(provider=k8s_provider, depends_on=[external_dns_irsa_role, aws_load_balancer_controller_chart]))
 
 
 
@@ -1347,7 +1369,7 @@ cluster_autoscaler_chart = Chart(cas_sa_name,
             primary_node_group,
             second_node_group,
             # gpu_node_group,
-            aws_load_balancer_controller_chart
+            # aws_load_balancer_controller_chart
         ]
     )
 )
@@ -1452,7 +1474,7 @@ velero_chart = Chart("velero", # <-- CRITICAL CHANGE 1: The Pulumi resource name
             "nameOverride": "velero",
             
             # We no longer need the 'envVars' block because the name will now match the default.
-            
+            "upgradeCRDs": False,
             "configuration": {
                 "backupStorageLocation": [{
                     "name": "default",
@@ -1494,7 +1516,7 @@ velero_chart = Chart("velero", # <-- CRITICAL CHANGE 1: The Pulumi resource name
         depends_on=[
             velero_secret,
             gp3_storage_class,
-            aws_load_balancer_controller_chart
+            # aws_load_balancer_controller_chart
         ]
     )
 )

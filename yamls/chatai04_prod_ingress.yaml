@@ -48,10 +48,10 @@ spec:
   rules:
     # - host: k8s-chatai-openwebu-dfd767cdbf-1006398550.ap-southeast-1.elb.amazonaws.com
     # - host: chatai.app.mmh-global.com # The hostname for the Ingress
-    - host: chatai.mmh-global.com # The hostname for the Ingress
+    # - host: chatai.mmh-global.com # The hostname for the Ingress
     # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    # - http:
-      http:
+    - http:
+      # http:
         paths:
           - path: /
             pathType: Prefix
@@ -61,16 +61,16 @@ spec:
                 port:
                   number: 80
 
-    - host: chatai.musimmas.com # The hostname for the Ingress
-    # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    # - http:
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: open-webui-svc
-                port:
-                  number: 80
+    # - host: chatai.musimmas.com # The hostname for the Ingress
+    # # - host: chatai.app.musimmas.com # The hostname for the Ingress
+    # # - http:
+    #   http:
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+    #         backend:
+    #           service:
+    #             name: open-webui-svc
+    #             port:
+    #               number: 80
          

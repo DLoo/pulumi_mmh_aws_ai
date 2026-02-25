@@ -8,7 +8,7 @@ metadata:
 data:
   redis.conf: |
     # Set a password for Redis
-    # requirepass your-strong-password
+    # requirepass CanLoadMulti8899
 
     # Set the maximum memory to 256mb
     maxmemory 512mb
