@@ -24,10 +24,17 @@ metadata:
     # For production, you'll change it to:
     # cert-manager.io/cluster-issuer: letsencrypt-prod
     # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # Ensure ALB listens on 443
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]' # Ensure ALB listens on 443
     alb.ingress.kubernetes.io/ssl-redirect: '443' # Optional: Redirect HTTP to HTTPS
-    
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:529236942211:certificate/4693b18c-f180-4cd6-9c1b-6e62bbfe9379
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/load-balancer-name: sg-prd-ssa-chatai-int-alb-001
+    alb.ingress.kubernetes.io/security-groups: sg-005039349d8350936
+    alb.ingress.kubernetes.io/subnets: subnet-0c0b6a1756c5782d3,subnet-038a11e8c5c707329
+
     # chatai.app.mmh-global.com
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:529236942211:certificate/4693b18c-f180-4cd6-9c1b-6e62bbfe9379
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/863439db-c6a1-4231-b8ac-0af6ad671384
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:353654036991:certificate/ba96b075-f7b8-4e6c-9ed8-6a9249bc6ecc
     # chatai.app.musimmas.com
@@ -40,26 +47,68 @@ metadata:
 
 spec:
   ingressClassName: alb
+  rules:
+  - host: chatai.mmh-global.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: open-webui-svc
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  - host: chataitest.mmh-global.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: open-webui-svc
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  - host: chatai.musimmas.com # The hostname for the Ingress
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: open-webui-svc
+              port:
+                number: 80
+  - host: chataitest.musimmas.com # The hostname for the Ingress
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: open-webui-svc
+              port:
+                number: 80
+
   # This section enables TLS on the ALB using the cert from cert-manager
   # tls:
   #   - hosts:
   #     - chatai.app.mmh-global.com 
   #     secretName: chatai-tls-secret # cert-manager will create this secret for us
-  rules:
-    # - host: k8s-chatai-openwebu-dfd767cdbf-1006398550.ap-southeast-1.elb.amazonaws.com
-    # - host: chatai.app.mmh-global.com # The hostname for the Ingress
-    # - host: chatai.mmh-global.com # The hostname for the Ingress
-    # - host: chatai.app.musimmas.com # The hostname for the Ingress
-    - http:
-      # http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: open-webui-svc
-                port:
-                  number: 80
+  # rules:
+  #   # - host: k8s-chatai-openwebu-dfd767cdbf-1006398550.ap-southeast-1.elb.amazonaws.com
+  #   # - host: chatai.app.mmh-global.com # The hostname for the Ingress
+  #   # - host: chatai.mmh-global.com # The hostname for the Ingress
+  #   # - host: chatai.app.musimmas.com # The hostname for the Ingress
+  #   - http:
+  #     # http:
+  #       paths:
+  #         - path: /
+  #           pathType: Prefix
+  #           backend:
+  #             service:
+  #               name: open-webui-svc
+  #               port:
+  #                 number: 80
 
     # - host: chatai.musimmas.com # The hostname for the Ingress
     # # - host: chatai.app.musimmas.com # The hostname for the Ingress
@@ -74,3 +123,58 @@ spec:
     #             port:
     #               number: 80
          
+
+# ---
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   annotations:
+#     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:529236942211:certificate/4693b18c-f180-4cd6-9c1b-6e62bbfe9379
+#     alb.ingress.kubernetes.io/healthcheck-path: /
+#     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+#     alb.ingress.kubernetes.io/load-balancer-name: sg-prd-ssa-chatai-int-alb-001
+#     alb.ingress.kubernetes.io/scheme: internal
+#     alb.ingress.kubernetes.io/security-groups: sg-005039349d8350936
+#     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09
+#     alb.ingress.kubernetes.io/subnets: subnet-0c0b6a1756c5782d3,subnet-038a11e8c5c707329
+#     alb.ingress.kubernetes.io/target-type: ip
+#     kubectl.kubernetes.io/last-applied-configuration: |
+#       {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"alb.ingress.kubernetes.io/certificate-arn":"arn:aws:acm:ap-southeast-1:529236942211:certificate/4693b18c-f180-4cd6-9c1b-6e62bbfe9379","alb.ingress.kubernetes.io/healthcheck-path":"/","alb.ingress.kubernetes.io/listen-ports":"[{\"HTTPS\":443}]","alb.ingress.kubernetes.io/load-balancer-name":"sg-prd-ssa-chatai-int-alb-001","alb.ingress.kubernetes.io/scheme":"internal","alb.ingress.kubernetes.io/security-groups":"sg-005039349d8350936","alb.ingress.kubernetes.io/subnets":"subnet-0c0b6a1756c5782d3,subnet-038a11e8c5c707329","alb.ingress.kubernetes.io/target-type":"ip"},"name":"open-webui-ingress","namespace":"chatai"},"spec":{"ingressClassName":"alb","rules":[{"host":"chatai.mmh-global.com","http":{"paths":[{"backend":{"service":{"name":"open-webui-svc","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}},{"host":"chataitest.mmh-global.com","http":{"paths":[{"backend":{"service":{"name":"open-webui-svc","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}}]}}
+#   creationTimestamp: "2026-02-26T06:25:21Z"
+#   finalizers:
+#   - ingress.k8s.aws/resources
+#   generation: 1
+#   name: open-webui-ingress
+#   namespace: chatai
+#   resourceVersion: "12132353"
+#   uid: 3cb955c4-0231-42c6-9679-87e24775bf45
+# spec:
+#   ingressClassName: alb
+#   rules:
+#   - host: chatai.mmh-global.com
+#     http:
+#       paths:
+#       - backend:
+#           service:
+#             name: open-webui-svc
+#             port:
+#               number: 80
+#         path: /
+#         pathType: Prefix
+#   - host: chataitest.mmh-global.com
+#     http:
+#       paths:
+#       - backend:
+#           service:
+#             name: open-webui-svc
+#             port:
+#               number: 80
+#         path: /
+#         pathType: Prefix
+# status:
+#   loadBalancer:
+#     ingress:
+#     - hostname: internal-sg-prd-ssa-chatai-int-alb-001-1482727653.ap-southeast-1.elb.amazonaws.com
+#       ports:
+#       - port: 443
+#         protocol: ""
